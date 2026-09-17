@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useWorldStore, worldStore } from '../store/useWorldStore';
 import { DOMAINS } from '../types/world';
+import { GAME_MODES } from '../types/avatar';
 import confetti from 'canvas-confetti';
 import {
   Sparkles,
@@ -191,7 +192,7 @@ export default function HeaderBar({ onOpenHelp }) {
               {avatarConfig?.username || 'Builder'}
             </div>
             <div className="text-[9px] uppercase font-bold text-tropical-coral tracking-wider">
-              {avatarConfig?.gameMode || 'Creative'}
+              {GAME_MODES[avatarConfig?.gameMode]?.name || 'Dreamweaver'}
             </div>
           </div>
         </button>

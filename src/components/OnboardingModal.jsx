@@ -27,8 +27,24 @@ import {
   Feather,
   Shield,
   X,
-  ArrowRight
+  ArrowRight,
+  Flame,
+  ShieldAlert,
+  Compass,
+  Ghost,
+  Users,
+  Sprout,
 } from 'lucide-react';
+
+const MODE_ICONS = {
+  Flame,
+  Feather,
+  ShieldAlert,
+  Compass,
+  Ghost,
+  Users,
+  Sprout,
+};
 
 export default function OnboardingModal({ isOpen, onClose }) {
   const { avatarConfig } = useWorldStore();
@@ -241,63 +257,85 @@ export default function OnboardingModal({ isOpen, onClose }) {
                   </div>
                 </div>
 
-                {/* Game Mode Selector */}
+                {/* The 7 Whimsical Game Modes */}
                 <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                    Choose Game Mode
-                  </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {/* Creative Mode */}
-                    <div
-                      onClick={() => handleUpdate('gameMode', 'creative')}
-                      className={`cursor-pointer tropical-card p-3.5 rounded-2xl border-2 transition-all ${
-                        config.gameMode === 'creative'
-                          ? 'border-tropical-aqua bg-cyan-50/60 shadow-aqua-glow scale-102'
-                          : 'border-transparent hover:border-black/10'
-                      }`}
-                    >
-                      <div className="flex items-center space-x-2 text-cyan-600 mb-1">
-                        <Feather className="w-4 h-4" />
-                        <span className="font-fredoka text-sm font-bold">Creative Mode</span>
-                      </div>
-                      <p className="text-xs text-slate-600 leading-relaxed">
-                        Unlimited resources, free flying camera, and instant terrain break/build.
-                      </p>
-                      <div className="flex flex-wrap gap-1 mt-2.5">
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-700 font-semibold">
-                          Infinity Blocks
-                        </span>
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-700 font-semibold">
-                          Fly Camera
-                        </span>
-                      </div>
-                    </div>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                      The 7 Whimsical Game Modes
+                    </label>
+                    <span className="text-[10px] text-tropical-coral font-semibold">
+                      {GAME_MODES[config.gameMode]?.name || 'Select Mode'}
+                    </span>
+                  </div>
 
-                    {/* Survival Mode */}
-                    <div
-                      onClick={() => handleUpdate('gameMode', 'survival')}
-                      className={`cursor-pointer tropical-card p-3.5 rounded-2xl border-2 transition-all ${
-                        config.gameMode === 'survival'
-                          ? 'border-tropical-coral bg-pink-50/60 shadow-coral-glow scale-102'
-                          : 'border-transparent hover:border-black/10'
-                      }`}
-                    >
-                      <div className="flex items-center space-x-2 text-rose-600 mb-1">
-                        <Shield className="w-4 h-4" />
-                        <span className="font-fredoka text-sm font-bold">Survival Mode</span>
-                      </div>
-                      <p className="text-xs text-slate-600 leading-relaxed">
-                        Health bar, finite hotbar inventory, realistic gravity, and delayed mining.
-                      </p>
-                      <div className="flex flex-wrap gap-1 mt-2.5">
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-700 font-semibold">
-                          Health & Stamina
-                        </span>
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-700 font-semibold">
-                          Finite Items
-                        </span>
-                      </div>
-                    </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-72 overflow-y-auto pr-1">
+                    {Object.values(GAME_MODES).map((mode) => {
+                      const IconComponent = MODE_ICONS[mode.icon] || Sparkles;
+                      const isSelected = config.gameMode === mode.id;
+
+                      return (
+                        <div
+                          key={mode.id}
+                          onClick={() => handleUpdate('gameMode', mode.id)}
+                          className={`cursor-pointer tropical-card p-3 rounded-2xl border-2 transition-all relative ${
+                            isSelected
+                              ? `${mode.borderClass} bg-white shadow-tropical-md scale-101 ring-1 ring-black/5`
+                              : 'border-transparent hover:border-black/10 bg-white/70'
+                          }`}
+                        >
+                          {/* Header: Icon + Name + Subtitle */}
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-2">
+                              <div
+                                className="w-7 h-7 rounded-xl flex items-center justify-center shadow-sm"
+                                style={{
+                                  backgroundColor: `${mode.color}20`,
+                                  color: mode.color,
+                                }}
+                              >
+                                <IconComponent className="w-4 h-4" />
+                              </div>
+                              <div>
+                                <h4 className="font-fredoka text-xs font-bold text-slate-800 leading-tight">
+                                  {mode.name}
+                                </h4>
+                                <span className="text-[9px] font-semibold text-slate-500 uppercase tracking-wider">
+                                  {mode.subtitle}
+                                </span>
+                              </div>
+                            </div>
+
+                            {isSelected && (
+                              <div
+                                className="w-4 h-4 rounded-full flex items-center justify-center text-white"
+                                style={{ backgroundColor: mode.color }}
+                              >
+                                <Check className="w-2.5 h-2.5 stroke-[3]" />
+                              </div>
+                            )}
+                          </div>
+
+                          {/* 2-3 Keyword Tagline (Prominent & Clean!) */}
+                          <div className="mt-2">
+                            <span
+                              className="text-[10px] font-bold px-2 py-0.5 rounded-lg shadow-sm border border-black/5 inline-flex items-center space-x-1"
+                              style={{
+                                backgroundColor: isSelected ? `${mode.color}15` : 'rgba(255, 255, 255, 0.95)',
+                                color: isSelected ? mode.color : '#334155',
+                              }}
+                            >
+                              <span>✨</span>
+                              <span>{mode.shortKeywords}</span>
+                            </span>
+                          </div>
+
+                          {/* Description */}
+                          <p className="text-[11px] text-slate-600 leading-snug mt-1.5 line-clamp-2">
+                            {mode.description}
+                          </p>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 
