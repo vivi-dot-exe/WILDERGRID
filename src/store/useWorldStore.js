@@ -12,6 +12,7 @@ import { soundManager } from '../utils/sound';
 import { createInitialEntities, ENTITY_CONFIGS } from '../types/entities';
 import { WEATHER_EVENTS, INITIAL_TICKER_LOGS } from '../utils/events';
 import { DEFAULT_AVATAR_CONFIG } from '../types/avatar';
+import { DEFAULT_HOTBAR_SLOTS } from '../types/hotbar';
 
 const DEFAULT_SEED = 'sunny-resort-villa';
 const GRID_SIZE = 16;
@@ -71,6 +72,16 @@ let state = {
     { id: '4,0,5', x: 4, y: 0, z: 5, color: '#2ec4b6' },
   ],
   legoSelectedColor: '#ff6b8b',
+
+  // 9-Slot Hotbar & Inventory
+  hotbarSlots: [...DEFAULT_HOTBAR_SLOTS],
+  selectedHotbarIndex: 0,
+  isInventoryOpen: false,
+
+  // Survival Vitals
+  playerHealth: 20, // 10 hearts
+  playerStamina: 20, // 10 stamina units
+  isFlying: false, // Creative flight mode
 };
 
 const listeners = new Set();
@@ -204,11 +215,11 @@ export const worldStore = {
   },
 
   // 3D Lego Voxel Actions
-  placeLegoBrick(x, y, z, color) {
+  placeLegoBrick(x, y, z, color, propId = null) {
     const key = `${x},${y},${z}`;
     const brickColor = color || state.legoSelectedColor || '#ff6b8b';
     const existingIndex = state.legoBricks.findIndex(b => b.x === x && b.y === y && b.z === z);
-    const newBrick = { id: key, x, y, z, color: brickColor };
+    const newBrick = { id: key, x, y, z, color: brickColor, propId };
     let newBricks;
     if (existingIndex >= 0) {
       newBricks = [...state.legoBricks];
@@ -237,6 +248,85 @@ export const worldStore = {
 
   clearLegoBricks() {
     state = { ...state, legoBricks: [] };
+    emitChange();
+  },
+
+  // Hotbar & Survival Management
+  setSelectedHotbarIndex(idx) {
+    const clamped = Math.max(0, Math.min(8, idx));
+    state = { ...state, selectedHotbarIndex: clamped };
+    const item = state.hotbarSlots[clamped];
+    if (item && item.color) {
+      state.legoSelectedColor = item.color;
+    }
+    soundManager.playClick();
+    emitChange();
+  },
+
+  setHotbarSlot(idx, item) {
+    const newSlots = [...state.hotbarSlots];
+    newSlots[idx] = item;
+    state = { ...state, hotbarSlots: newSlots };
+    emitChange();
+  },
+
+  toggleInventory(forcedOpen = null) {
+    const nextOpen = forcedOpen !== null ? forcedOpen : !state.isInventoryOpen;
+    state = { ...state, isInventoryOpen: nextOpen };
+    soundManager.playClick();
+    emitChange();
+  },
+
+  damagePlayer(amount) {
+    const nextHealth = Math.max(0, state.playerHealth - amount);
+    state = { ...state, playerHealth: nextHealth };
+    soundManager.playPlaceTile('peak');
+    emitChange();
+  },
+
+  healPlayer(amount) {
+    const nextHealth = Math.min(20, state.playerHealth + amount);
+    state = { ...state, playerHealth: nextHealth };
+    emitChange();
+  },
+
+  consumeStamina(amount) {
+    const nextStamina = Math.max(0, state.playerStamina - amount);
+    state = { ...state, playerStamina: nextStamina };
+    emitChange();
+  },
+
+  recoverStamina(amount) {
+    const nextStamina = Math.min(20, state.playerStamina + amount);
+    state = { ...state, playerStamina: nextStamina };
+    emitChange();
+  },
+
+  consumeCurrentHotbarItem() {
+    const idx = state.selectedHotbarIndex;
+    const current = state.hotbarSlots[idx];
+    if (!current) return false;
+    const newSlots = [...state.hotbarSlots];
+    newSlots[idx] = { ...current, count: Math.max(0, current.count - 1) };
+    state = { ...state, hotbarSlots: newSlots };
+    emitChange();
+    return true;
+  },
+
+  addHotbarItemCount(itemId, count = 1) {
+    const newSlots = [...state.hotbarSlots];
+    const existing = newSlots.find(s => s.id === itemId);
+    if (existing) {
+      existing.count += count;
+    } else {
+      newSlots[state.selectedHotbarIndex].count += count;
+    }
+    state = { ...state, hotbarSlots: newSlots };
+    emitChange();
+  },
+
+  setFlying(flying) {
+    state = { ...state, isFlying: flying };
     emitChange();
   },
 

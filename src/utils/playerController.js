@@ -4,9 +4,10 @@ export class PlayerController {
   constructor(camera, domElement, options = {}) {
     this.camera = camera;
     this.domElement = domElement;
+    this.options = options;
 
     // Position & Physics
-    this.position = new THREE.Vector3(options.spawnX || 8, 0, options.spawnZ || 8);
+    this.position = new THREE.Vector3(options.spawnX || 4.5, 0, options.spawnZ || 4.5);
     this.velocity = new THREE.Vector3(0, 0, 0);
     this.isGrounded = true;
 
@@ -20,6 +21,13 @@ export class PlayerController {
     this.jumpForce = 8.5;
     this.walkSpeed = 6.5;
     this.runSpeed = 10.5;
+    this.flySpeed = 9.0;
+
+    // Mode flags
+    this.isCreative = options.isCreative ?? true;
+    this.isFlying = false;
+    this.lastSpaceTime = 0;
+    this.fallApexY = 0;
 
     // Orientation (Euler yaw & pitch)
     this.yaw = options.initialYaw !== undefined ? options.initialYaw : -0.75;
@@ -66,6 +74,14 @@ export class PlayerController {
     this.domElement.addEventListener('wheel', this.onWheel, { passive: false });
   }
 
+  setCreativeMode(isCreative) {
+    this.isCreative = isCreative;
+    if (!isCreative && this.isFlying) {
+      this.isFlying = false;
+      this.options.onToggleFly?.(false);
+    }
+  }
+
   lock() {
     this.domElement.requestPointerLock?.();
   }
@@ -98,12 +114,23 @@ export class PlayerController {
       case 'ArrowRight':
         this.keys.right = true;
         break;
-      case 'Space':
-        if (this.isGrounded) {
+      case 'Space': {
+        this.keys.jump = true;
+
+        // Double-tap Spacebar in Creative Mode toggles Flight
+        const now = performance.now();
+        if (this.isCreative && now - this.lastSpaceTime < 320) {
+          this.isFlying = !this.isFlying;
+          this.velocity.y = 0;
+          this.options.onToggleFly?.(this.isFlying);
+        } else if (!this.isFlying && this.isGrounded) {
           this.velocity.y = this.jumpForce;
           this.isGrounded = false;
+          this.fallApexY = this.position.y;
         }
+        this.lastSpaceTime = now;
         break;
+      }
       case 'ShiftLeft':
       case 'ShiftRight':
         this.keys.run = true;
@@ -128,6 +155,9 @@ export class PlayerController {
       case 'KeyD':
       case 'ArrowRight':
         this.keys.right = false;
+        break;
+      case 'Space':
+        this.keys.jump = false;
         break;
       case 'ShiftLeft':
       case 'ShiftRight':
@@ -157,15 +187,12 @@ export class PlayerController {
     );
   }
 
-  /**
-   * Set or update the 3D blocky mannequin avatar
-   */
   setAvatarMesh(avatarGroup) {
     this.avatarGroup = avatarGroup;
   }
 
   /**
-   * Main update physics, collision, and camera frame step
+   * Main update physics, collision, flying, and camera frame step
    */
   update(delta, colliders = []) {
     const dt = Math.min(delta, 0.1);
@@ -186,40 +213,62 @@ export class PlayerController {
     const isMoving = moveDir.lengthSq() > 0.001;
     if (isMoving) moveDir.normalize();
 
-    const currentSpeed = this.keys.run ? this.runSpeed : this.walkSpeed;
+    // Stamina consumption in survival when running
+    if (this.keys.run && isMoving && !this.isCreative) {
+      this.options.onConsumeStamina?.(dt * 1.6);
+    }
 
-    // Apply horizontal velocity with snappy response
+    const currentSpeed = this.isFlying
+      ? this.flySpeed
+      : this.keys.run
+      ? this.runSpeed
+      : this.walkSpeed;
+
+    // Apply horizontal velocity
     const targetVelX = moveDir.x * currentSpeed;
     const targetVelZ = moveDir.z * currentSpeed;
 
     this.velocity.x = THREE.MathUtils.lerp(this.velocity.x, targetVelX, dt * 16);
     this.velocity.z = THREE.MathUtils.lerp(this.velocity.z, targetVelZ, dt * 16);
 
-    // Apply gravity
-    this.velocity.y += this.gravity * dt;
+    if (this.isFlying) {
+      // Creative Flight Vertical Movement
+      let targetVelY = 0;
+      if (this.keys.jump) targetVelY = this.flySpeed;
+      if (this.keys.run) targetVelY = -this.flySpeed;
+      this.velocity.y = THREE.MathUtils.lerp(this.velocity.y, targetVelY, dt * 12);
+    } else {
+      // Standard Gravity Physics
+      this.velocity.y += this.gravity * dt;
 
-    // Potential new position
+      // Track fall apex for fall damage
+      if (this.position.y > this.fallApexY) {
+        this.fallApexY = this.position.y;
+      }
+    }
+
+    // Desired new positions
     const desiredX = this.position.x + this.velocity.x * dt;
     const desiredY = this.position.y + this.velocity.y * dt;
     const desiredZ = this.position.z + this.velocity.z * dt;
 
     // AABB Collision with Lego block obstacles
-    // 1. Move X with collision test
     this.position.x = this.resolveAxisCollision(desiredX, this.position.y, this.position.z, 'x', colliders);
-
-    // 2. Move Z with collision test
     this.position.z = this.resolveAxisCollision(this.position.x, this.position.y, desiredZ, 'z', colliders);
 
-    // 3. Move Y and resolve ground collision
-    this.resolveVerticalCollision(desiredY, colliders);
+    if (!this.isFlying) {
+      this.resolveVerticalCollision(desiredY, colliders);
+    } else {
+      this.position.y = Math.max(0.2, desiredY);
+      this.fallApexY = this.position.y;
+    }
 
     // Animate avatar walk cycle and position
     if (this.avatarGroup) {
       this.avatarGroup.position.copy(this.position);
-      // Face towards look direction
       this.avatarGroup.rotation.y = this.yaw;
 
-      if (isMoving && this.isGrounded) {
+      if (isMoving && (this.isGrounded || this.isFlying)) {
         this.walkCycle += dt * (this.keys.run ? 14 : 9);
       } else {
         this.walkCycle = THREE.MathUtils.lerp(this.walkCycle, 0, dt * 8);
@@ -227,12 +276,12 @@ export class PlayerController {
 
       this.animateAvatarLimbs();
 
-      // In tight first-person interior view (< 2.0 distance), hide avatar so camera doesn't clip
-      const isFirstPerson = this.currentDistance < 2.0;
+      // In tight first-person interior view (< 1.8 distance), hide avatar so camera doesn't clip
+      const isFirstPerson = this.currentDistance < 1.8;
       this.avatarGroup.visible = !isFirstPerson;
     }
 
-    // Update Camera position & look target
+    // Update Camera position & occlude against walls
     this.updateCamera(colliders);
   }
 
@@ -250,7 +299,6 @@ export class PlayerController {
 
     for (let i = 0; i < colliders.length; i++) {
       const b = colliders[i];
-      // Check overlap in all three dimensions
       if (
         pMaxX > b.minX &&
         pMinX < b.maxX &&
@@ -259,7 +307,6 @@ export class PlayerController {
         pMaxZ > b.minZ &&
         pMinZ < b.maxZ
       ) {
-        // Collision occurred on this axis, revert movement
         if (axis === 'x') {
           this.velocity.x = 0;
           return this.position.x;
@@ -280,12 +327,11 @@ export class PlayerController {
     const pMinZ = this.position.z - r;
     const pMaxZ = this.position.z + r;
 
-    let groundLevel = 0.0; // street / floor base level
+    let groundLevel = 0.0;
 
     for (let i = 0; i < colliders.length; i++) {
       const b = colliders[i];
       if (pMaxX > b.minX && pMinX < b.maxX && pMaxZ > b.minZ && pMinZ < b.maxZ) {
-        // Block is horizontally underneath or aligned with player
         if (b.maxY <= this.position.y + 0.5) {
           groundLevel = Math.max(groundLevel, b.maxY);
         }
@@ -293,9 +339,19 @@ export class PlayerController {
     }
 
     if (desiredY <= groundLevel) {
+      // Landing: check fall damage in Survival Mode
+      const fallDist = this.fallApexY - groundLevel;
+      if (!this.isCreative && !this.isGrounded && fallDist > 3.5) {
+        const dmg = Math.floor((fallDist - 3.5) * 2.5);
+        if (dmg > 0) {
+          this.options.onFallDamage?.(dmg);
+        }
+      }
+
       this.position.y = groundLevel;
       this.velocity.y = 0;
       this.isGrounded = true;
+      this.fallApexY = groundLevel;
     } else {
       this.position.y = desiredY;
       this.isGrounded = false;
@@ -308,7 +364,6 @@ export class PlayerController {
     const swing = Math.sin(this.walkCycle) * 0.55;
     const bob = Math.abs(Math.sin(this.walkCycle)) * 0.08;
 
-    // Limb bone references if named
     const leftArm = this.avatarGroup.getObjectByName('leftArm');
     const rightArm = this.avatarGroup.getObjectByName('rightArm');
     const leftLeg = this.avatarGroup.getObjectByName('leftLeg');
@@ -322,6 +377,9 @@ export class PlayerController {
     if (torso) torso.position.y = bob;
   }
 
+  /**
+   * Camera position with wall occlusion raycasting to prevent clipping through interior rooms
+   */
   updateCamera(colliders) {
     const eyePoint = new THREE.Vector3(
       this.position.x,
@@ -329,7 +387,6 @@ export class PlayerController {
       this.position.z
     );
 
-    // Compute look direction vector from pitch and yaw
     const lookDir = new THREE.Vector3(
       -Math.sin(this.yaw) * Math.cos(this.pitch),
       Math.sin(this.pitch),
@@ -337,20 +394,63 @@ export class PlayerController {
     ).normalize();
 
     if (this.currentDistance < 1.8) {
-      // First-person view: camera placed right at the eyes
+      // First-person view
       this.camera.position.copy(eyePoint);
       const targetPoint = eyePoint.clone().add(lookDir);
       this.camera.lookAt(targetPoint);
     } else {
-      // Third-person orbit view
-      let cameraPos = eyePoint.clone().sub(lookDir.clone().multiplyScalar(this.currentDistance));
+      // Third-person orbit view with Wall Occlusion Check
+      const idealCameraPos = eyePoint.clone().sub(lookDir.clone().multiplyScalar(this.currentDistance));
 
-      // Prevent camera from dipping below ground street level
-      if (cameraPos.y < 0.4) cameraPos.y = 0.4;
+      // Raycast from eyePoint towards ideal camera position
+      const rayDir = idealCameraPos.clone().sub(eyePoint).normalize();
+      const maxDist = this.currentDistance;
+      let closestDistance = maxDist;
 
-      this.camera.position.copy(cameraPos);
+      // Intersect ray with block bounding boxes
+      for (let i = 0; i < colliders.length; i++) {
+        const b = colliders[i];
+        const dist = this.intersectRayAABB(eyePoint, rayDir, b);
+        if (dist !== null && dist > 0.4 && dist < closestDistance) {
+          closestDistance = dist;
+        }
+      }
+
+      // Safe distance with padding so camera does not touch interior walls
+      const actualDistance = Math.max(1.2, closestDistance - 0.25);
+      const finalCameraPos = eyePoint.clone().add(rayDir.multiplyScalar(actualDistance));
+
+      if (finalCameraPos.y < 0.4) finalCameraPos.y = 0.4;
+
+      this.camera.position.copy(finalCameraPos);
       this.camera.lookAt(eyePoint);
     }
+  }
+
+  /**
+   * Helper: Ray-AABB intersection distance
+   */
+  intersectRayAABB(origin, dir, box) {
+    let tmin = (box.minX - origin.x) / (dir.x || 1e-6);
+    let tmax = (box.maxX - origin.x) / (dir.x || 1e-6);
+    if (tmin > tmax) [tmin, tmax] = [tmax, tmin];
+
+    let tymin = (box.minY - origin.y) / (dir.y || 1e-6);
+    let tymax = (box.maxY - origin.y) / (dir.y || 1e-6);
+    if (tymin > tymax) [tymin, tymax] = [tymax, tymin];
+
+    if (tmin > tymax || tymin > tmax) return null;
+    if (tymin > tmin) tmin = tymin;
+    if (tymax < tmax) tmax = tymax;
+
+    let tzmin = (box.minZ - origin.z) / (dir.z || 1e-6);
+    let tzmax = (box.maxZ - origin.z) / (dir.z || 1e-6);
+    if (tzmin > tzmax) [tzmin, tzmax] = [tzmax, tzmin];
+
+    if (tmin > tzmax || tzmin > tmax) return null;
+    if (tzmin > tmin) tmin = tzmin;
+
+    return tmin >= 0 ? tmin : null;
   }
 
   dispose() {

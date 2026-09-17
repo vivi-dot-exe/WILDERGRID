@@ -2,30 +2,15 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { useWorldStore, worldStore } from '../store/useWorldStore';
 import { DOMAINS, VIEW_MODES } from '../types/world';
-import { LegoVoxelEngine, createGhostBrick } from '../utils/legoMesh';
+import { LegoVoxelEngine, createGhostBrick, createCrackingOverlay } from '../utils/legoMesh';
 import { PlayerController, createAvatarMesh } from '../utils/playerController';
+import HotbarHUD from './HotbarHUD';
+import InventoryModal from './InventoryModal';
 import {
-  Compass,
   Sparkles,
   MousePointer,
-  RotateCcw,
-  Palette,
-  Maximize2,
   Eye,
-  ChevronRight,
-  Zap,
 } from 'lucide-react';
-
-const LEGO_PALETTE = [
-  '#ff6b8b', // Coral Pink
-  '#ffd166', // Buttercup Yellow
-  '#00bbf9', // Sky Cyan
-  '#2ec4b6', // Mint Teal
-  '#9d4edd', // Lavender Purple
-  '#ff9f1c', // Tangelo Orange
-  '#ffffff', // Crisp White
-  '#343a40', // Slate Black
-];
 
 export default function ThreeWorldCanvas() {
   const containerRef = useRef(null);
@@ -36,12 +21,27 @@ export default function ThreeWorldCanvas() {
     legoBricks,
     legoSelectedColor,
     avatarConfig,
+    hotbarSlots,
+    selectedHotbarIndex,
+    isInventoryOpen,
   } = useWorldStore();
 
   const [isLocked, setIsLocked] = useState(false);
   const [hasDismissedOverlay, setHasDismissedOverlay] = useState(false);
   const [cameraZoomLevel, setCameraZoomLevel] = useState('Exterior (3rd Person)');
-  const [activeColor, setActiveColor] = useState(legoSelectedColor || '#ff6b8b');
+
+  const isCreative =
+    avatarConfig?.gameMode === 'dreamweaver' ||
+    avatarConfig?.gameMode === 'creative';
+
+  // Mining reference for holding right-click in Survival
+  const miningRef = useRef({
+    active: false,
+    x: 0,
+    y: 0,
+    z: 0,
+    startTime: 0,
+  });
 
   // References to keep Three.js instances active across renders
   const engineRef = useRef({
@@ -51,21 +51,15 @@ export default function ThreeWorldCanvas() {
     playerController: null,
     legoEngine: null,
     ghostBrick: null,
+    crackingOverlay: null,
     streetGroup: null,
     avatarMesh: null,
     sunLight: null,
     ambientLight: null,
-    skyMesh: null,
-    groundMesh: null,
     raycaster: new THREE.Raycaster(),
     screenCenter: new THREE.Vector2(0, 0),
     animationFrameId: null,
   });
-
-  // Keep active color in sync
-  useEffect(() => {
-    setActiveColor(legoSelectedColor);
-  }, [legoSelectedColor]);
 
   // Main Three.js Scene Setup & Loop
   useEffect(() => {
@@ -109,7 +103,6 @@ export default function ThreeWorldCanvas() {
     sunLight.shadow.camera.bottom = -shadowDist;
     scene.add(sunLight);
 
-    // Secondary hemisphere fill light
     const hemiLight = new THREE.HemisphereLight(0xffffff, 0xbbe1fa, 0.45);
     scene.add(hemiLight);
 
@@ -117,7 +110,7 @@ export default function ThreeWorldCanvas() {
     const streetGroup = new THREE.Group();
     scene.add(streetGroup);
 
-    // 6. Instanced Lego Voxel Engine
+    // 6. Instanced & Prop Lego Voxel Engine
     const legoEngine = new LegoVoxelEngine(scene, 3000);
     legoEngine.syncBricks(legoBricks);
 
@@ -125,13 +118,27 @@ export default function ThreeWorldCanvas() {
     const ghostBrick = createGhostBrick();
     scene.add(ghostBrick);
 
-    // 8. Player Controller & Avatar Mannequin
+    // 8. Cracking Overlay for 1-Second Mining in Survival
+    const crackingOverlay = createCrackingOverlay();
+    scene.add(crackingOverlay);
+
+    // 9. Player Controller & Avatar Mannequin
     const playerController = new PlayerController(camera, renderer.domElement, {
       spawnX: 4.5,
       spawnZ: 4.5,
       initialYaw: -0.75,
       initialPitch: -0.2,
       initialDistance: 5.5,
+      isCreative,
+      onFallDamage: (damage) => {
+        worldStore.damagePlayer(damage);
+      },
+      onToggleFly: (flying) => {
+        worldStore.setFlying(flying);
+      },
+      onConsumeStamina: (amount) => {
+        worldStore.consumeStamina(amount);
+      },
     });
 
     const avatarMesh = createAvatarMesh(avatarConfig);
@@ -146,12 +153,11 @@ export default function ThreeWorldCanvas() {
       playerController,
       legoEngine,
       ghostBrick,
+      crackingOverlay,
       streetGroup,
       avatarMesh,
       sunLight,
       ambientLight,
-      skyMesh: null,
-      groundMesh: null,
       raycaster: new THREE.Raycaster(),
       screenCenter: new THREE.Vector2(0, 0),
       animationFrameId: null,
@@ -164,7 +170,7 @@ export default function ThreeWorldCanvas() {
     const currentGrid = activeDomain === DOMAINS.EXTERIOR ? exteriorGrid : interiorGrid;
     rebuildStreetWorld(streetGroup, currentGrid, activeDomain);
 
-    // 9. Resize Listener
+    // Resize Listener
     const handleResize = () => {
       if (!container) return;
       const w = container.clientWidth;
@@ -175,16 +181,31 @@ export default function ThreeWorldCanvas() {
     };
     window.addEventListener('resize', handleResize);
 
-    // 10. Pointer Lock status check
+    // Pointer Lock check
     const checkLockStatus = () => {
       const locked = document.pointerLockElement === renderer.domElement;
       setIsLocked(locked);
     };
     document.addEventListener('pointerlockchange', checkLockStatus);
 
-    // 11. Mouse Click Raycast (Left-click to place, Right-click to remove)
+    // Hotbar Number Keys (1-9) & Inventory ('E')
+    const handleKeyDown = (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+      if (e.code >= 'Digit1' && e.code <= 'Digit9') {
+        const slotIdx = parseInt(e.key) - 1;
+        worldStore.setSelectedHotbarIndex(slotIdx);
+      } else if (e.code === 'KeyE') {
+        if (document.pointerLockElement === renderer.domElement) {
+          document.exitPointerLock?.();
+        }
+        worldStore.toggleInventory();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+
+    // Raycast Interaction (Left-click Place, Right-click Mine)
     const handlePointerDown = (e) => {
-      // Must be locked or clicking directly to lock
       if (document.pointerLockElement !== renderer.domElement) {
         playerController.lock();
         return;
@@ -193,9 +214,12 @@ export default function ThreeWorldCanvas() {
       const raycaster = engineRef.current.raycaster;
       raycaster.setFromCamera(engineRef.current.screenCenter, camera);
 
-      // Collect interactable targets: lego blocks and street floor
+      // Collect interactable targets
       const targets = [];
       if (legoEngine.instancedMesh) targets.push(legoEngine.instancedMesh);
+      if (legoEngine.propsGroup) {
+        legoEngine.propsGroup.children.forEach((c) => targets.push(c));
+      }
       streetGroup.traverse((child) => {
         if (child.isMesh && child.userData.isInteractable) {
           targets.push(child);
@@ -206,16 +230,29 @@ export default function ThreeWorldCanvas() {
       if (intersects.length === 0) return;
 
       const hit = intersects[0];
-      const isLegoHit = hit.object === legoEngine.instancedMesh;
+      const isLegoHit =
+        hit.object === legoEngine.instancedMesh ||
+        hit.object.parent === legoEngine.propsGroup;
+
+      const currentStoreState = worldStore.getState();
+      const currentSlot =
+        currentStoreState.hotbarSlots[currentStoreState.selectedHotbarIndex] ||
+        currentStoreState.hotbarSlots[0];
+      const isCreativeMode =
+        currentStoreState.avatarConfig?.gameMode === 'dreamweaver' ||
+        currentStoreState.avatarConfig?.gameMode === 'creative';
 
       if (e.button === 0) {
-        // LEFT CLICK: Place Lego Brick
+        // LEFT CLICK: Place Active Hotbar Item
+        // In Survival, check if slot has count
+        if (!isCreativeMode && currentSlot.count <= 0) {
+          return;
+        }
+
         let targetX, targetY, targetZ;
 
-        if (isLegoHit && hit.instanceId !== undefined) {
-          // Find which brick was hit
+        if (isLegoHit) {
           const hitNormal = hit.face?.normal || new THREE.Vector3(0, 1, 0);
-          // Transform normal to world space if needed (instanced mesh is at origin)
           const hitPos = hit.point.clone().add(hitNormal.clone().multiplyScalar(0.45));
           targetX = Math.floor(hitPos.x);
           targetY = Math.max(0, Math.floor(hitPos.y));
@@ -234,28 +271,66 @@ export default function ThreeWorldCanvas() {
         const yOverlap = targetY < playerPos.y + 1.8 && targetY + 1 > playerPos.y;
 
         if (!(distToPlayer < 0.6 && yOverlap)) {
-          worldStore.placeLegoBrick(targetX, targetY, targetZ, activeColor);
+          worldStore.placeLegoBrick(
+            targetX,
+            targetY,
+            targetZ,
+            currentSlot.color,
+            currentSlot.propId
+          );
+
+          if (!isCreativeMode) {
+            worldStore.consumeCurrentHotbarItem();
+          }
         }
       } else if (e.button === 2) {
-        // RIGHT CLICK: Remove targeted Lego Brick
-        if (isLegoHit && hit.instanceId !== undefined) {
-          // Identify brick coordinates from hit point
-          const hitNormal = hit.face?.normal || new THREE.Vector3(0, 0, 0);
-          const hitPos = hit.point.clone().sub(hitNormal.clone().multiplyScalar(0.45));
-          const targetX = Math.floor(hitPos.x);
-          const targetY = Math.floor(hitPos.y);
-          const targetZ = Math.floor(hitPos.z);
+        // RIGHT CLICK: Remove / Mine Lego Block
+        if (isLegoHit) {
+          let targetX, targetY, targetZ;
 
-          worldStore.removeLegoBrick(targetX, targetY, targetZ);
+          if (hit.object.userData?.brickKey) {
+            targetX = hit.object.userData.x;
+            targetY = hit.object.userData.y;
+            targetZ = hit.object.userData.z;
+          } else {
+            const hitNormal = hit.face?.normal || new THREE.Vector3(0, 0, 0);
+            const hitPos = hit.point.clone().sub(hitNormal.clone().multiplyScalar(0.45));
+            targetX = Math.floor(hitPos.x);
+            targetY = Math.floor(hitPos.y);
+            targetZ = Math.floor(hitPos.z);
+          }
+
+          if (isCreativeMode) {
+            // Creative: Instant break!
+            worldStore.removeLegoBrick(targetX, targetY, targetZ);
+          } else {
+            // Survival: Start 1.0-second break timer with cracking animation!
+            miningRef.current = {
+              active: true,
+              x: targetX,
+              y: targetY,
+              z: targetZ,
+              startTime: performance.now(),
+            };
+          }
         }
+      }
+    };
+
+    const handlePointerUp = (e) => {
+      if (e.button === 2 && miningRef.current.active) {
+        // Cancel mining if released early
+        miningRef.current.active = false;
+        crackingOverlay.visible = false;
       }
     };
 
     const preventContext = (e) => e.preventDefault();
     renderer.domElement.addEventListener('mousedown', handlePointerDown);
+    window.addEventListener('mouseup', handlePointerUp);
     renderer.domElement.addEventListener('contextmenu', preventContext);
 
-    // 12. Main Animation Frame Loop
+    // Main Animation Frame Loop
     let lastTime = performance.now();
 
     const animate = (time) => {
@@ -267,6 +342,33 @@ export default function ThreeWorldCanvas() {
       // Update colliders from Lego blocks and street boundaries
       const blockColliders = legoEngine.getAllBrickAABBs();
       playerController.update(delta, blockColliders);
+
+      // Survival Mining 1-Second Timer & Cracking Overlay Animation
+      if (miningRef.current.active) {
+        const elapsed = (time - miningRef.current.startTime) / 1000;
+        if (elapsed >= 1.0) {
+          // Block broken!
+          worldStore.removeLegoBrick(
+            miningRef.current.x,
+            miningRef.current.y,
+            miningRef.current.z
+          );
+          worldStore.addHotbarItemCount('brick_rose', 1);
+          miningRef.current.active = false;
+          crackingOverlay.visible = false;
+        } else {
+          // Animate cracks and opacity
+          crackingOverlay.position.set(
+            miningRef.current.x + 0.5,
+            miningRef.current.y,
+            miningRef.current.z + 0.5
+          );
+          crackingOverlay.visible = true;
+          crackingOverlay.material.opacity = Math.min(0.95, 0.25 + elapsed * 0.7);
+        }
+      } else {
+        crackingOverlay.visible = false;
+      }
 
       // Update Zoom HUD status
       if (playerController.currentDistance < 2.0) {
@@ -284,6 +386,9 @@ export default function ThreeWorldCanvas() {
 
         const targets = [];
         if (legoEngine.instancedMesh) targets.push(legoEngine.instancedMesh);
+        if (legoEngine.propsGroup) {
+          legoEngine.propsGroup.children.forEach((c) => targets.push(c));
+        }
         streetGroup.traverse((child) => {
           if (child.isMesh && child.userData.isInteractable) {
             targets.push(child);
@@ -300,6 +405,13 @@ export default function ThreeWorldCanvas() {
           const snapZ = Math.floor(hitPos.z);
 
           ghostBrick.position.set(snapX + 0.5, snapY, snapZ + 0.5);
+
+          // Update ghost color from selected hotbar slot
+          const st = worldStore.getState();
+          const curSlot = st.hotbarSlots[st.selectedHotbarIndex];
+          if (curSlot?.color) {
+            ghostBrick.material.color.set(curSlot.color);
+          }
           ghostBrick.visible = true;
         } else {
           ghostBrick.visible = false;
@@ -317,8 +429,10 @@ export default function ThreeWorldCanvas() {
     return () => {
       cancelAnimationFrame(engineRef.current.animationFrameId);
       window.removeEventListener('resize', handleResize);
+      window.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('pointerlockchange', checkLockStatus);
       renderer.domElement.removeEventListener('mousedown', handlePointerDown);
+      window.removeEventListener('mouseup', handlePointerUp);
       renderer.domElement.removeEventListener('contextmenu', preventContext);
 
       playerController.dispose();
@@ -331,7 +445,14 @@ export default function ThreeWorldCanvas() {
     };
   }, []);
 
-  // Sync Lego Bricks when store changes
+  // Sync Creative mode flag
+  useEffect(() => {
+    if (engineRef.current.playerController) {
+      engineRef.current.playerController.setCreativeMode(isCreative);
+    }
+  }, [isCreative]);
+
+  // Sync Lego Bricks
   useEffect(() => {
     if (engineRef.current.legoEngine) {
       engineRef.current.legoEngine.syncBricks(legoBricks);
@@ -364,10 +485,7 @@ export default function ThreeWorldCanvas() {
     }
   }, [activeDomain, exteriorGrid, interiorGrid]);
 
-  const handleSelectColor = (color) => {
-    setActiveColor(color);
-    worldStore.setLegoSelectedColor(color);
-  };
+  const activeSlot = hotbarSlots[selectedHotbarIndex] || hotbarSlots[0];
 
   return (
     <div className="relative w-full h-full overflow-hidden bg-slate-900 select-none">
@@ -382,10 +500,10 @@ export default function ThreeWorldCanvas() {
       {isLocked && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="relative flex items-center justify-center">
-            {/* Soft Crosshair Dot */}
+            {/* Soft Crosshair Dot with active block color */}
             <div
               className="w-3.5 h-3.5 rounded-full border-2 border-white shadow-lg transition-transform duration-75 scale-100"
-              style={{ backgroundColor: activeColor }}
+              style={{ backgroundColor: activeSlot?.color || '#ff6b8b' }}
             />
             <div className="absolute w-8 h-8 rounded-full border border-white/50 animate-ping opacity-25" />
           </div>
@@ -433,15 +551,15 @@ export default function ThreeWorldCanvas() {
             </div>
 
             <div className="flex items-center space-x-1.5 bg-white/60 px-2 py-1 rounded-lg">
-              <span className="font-bold text-[10px] text-tropical-aqua">Scroll</span>
-              <span>Zoom In/Out</span>
+              <kbd className="font-mono font-bold text-[10px] bg-slate-100 px-1.5 py-0.5 rounded border border-slate-300">
+                E
+              </kbd>
+              <span>Inventory</span>
             </div>
 
             <div className="flex items-center space-x-1.5 bg-white/60 px-2 py-1 rounded-lg">
-              <kbd className="font-mono font-bold text-[10px] bg-slate-100 px-1.5 py-0.5 rounded border border-slate-300">
-                Shift
-              </kbd>
-              <span>Sprint</span>
+              <span className="font-bold text-[10px] text-tropical-aqua">1–9</span>
+              <span>Hotbar</span>
             </div>
 
             <div className="flex items-center space-x-1.5 bg-white/60 px-2 py-1 rounded-lg">
@@ -451,7 +569,7 @@ export default function ThreeWorldCanvas() {
 
             <div className="flex items-center space-x-1.5 bg-white/60 px-2 py-1 rounded-lg">
               <span className="font-bold text-rose-500">Right-Click</span>
-              <span>Remove</span>
+              <span>{isCreative ? 'Break' : 'Hold Mine'}</span>
             </div>
           </div>
 
@@ -461,47 +579,11 @@ export default function ThreeWorldCanvas() {
         </div>
       </div>
 
-      {/* Bottom Center: Lego Brick Color Palette Dock */}
-      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 pointer-events-auto">
-        <div className="tropical-glass px-4 py-2.5 rounded-3xl flex items-center space-x-3 shadow-tropical-lg border border-white/90">
-          <div className="flex items-center space-x-1.5 pr-2 border-r border-slate-200/80">
-            <Palette className="w-4 h-4 text-tropical-coral" />
-            <span className="text-xs font-bold text-slate-700 hidden sm:inline">Lego Stud:</span>
-          </div>
+      {/* Minecraft-Style 9-Slot Hotbar & Survival Vitals HUD */}
+      <HotbarHUD />
 
-          {/* Color buttons */}
-          <div className="flex items-center space-x-2">
-            {LEGO_PALETTE.map((color) => (
-              <button
-                key={color}
-                onClick={() => handleSelectColor(color)}
-                style={{ backgroundColor: color }}
-                className={`w-7 h-7 rounded-xl shadow-sm transition-all hover:scale-115 relative flex items-center justify-center ${
-                  activeColor === color
-                    ? 'ring-3 ring-tropical-coral scale-110 shadow-coral-glow'
-                    : 'border border-black/10 hover:shadow-md'
-                }`}
-                title={`Select ${color}`}
-              >
-                {activeColor === color && (
-                  <span className="w-2 h-2 rounded-full bg-white shadow-sm" />
-                )}
-              </button>
-            ))}
-          </div>
-
-          {/* Clear / Undo block helpers */}
-          <div className="pl-2 border-l border-slate-200/80 flex items-center space-x-1.5">
-            <button
-              onClick={() => worldStore.clearLegoBricks()}
-              className="px-2.5 py-1 rounded-xl text-[11px] font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 transition shadow-sm"
-              title="Clear custom placed Lego bricks"
-            >
-              Clear All
-            </button>
-          </div>
-        </div>
-      </div>
+      {/* Full 'E' Inventory Catalog Modal */}
+      <InventoryModal />
 
       {/* Initial Welcome & Lock Overlay (Dismissible) */}
       {!hasDismissedOverlay && !isLocked && (
@@ -520,7 +602,7 @@ export default function ThreeWorldCanvas() {
               Enter 3D Street World
             </h3>
             <p className="text-xs text-slate-600 leading-relaxed">
-              Walk paved streets with WASD, jump, build Lego blocks with realistic studs, and dynamically zoom between interior and exterior perspectives!
+              Walk paved streets with WASD, jump, build with the 9-slot Hotbar, open full inventory with <kbd className="font-mono bg-slate-100 px-1 rounded font-bold">E</kbd>, and zoom dynamically!
             </p>
             <div className="pt-2 flex items-center space-x-2">
               <button
@@ -539,7 +621,7 @@ export default function ThreeWorldCanvas() {
       )}
 
       {/* Subtle Toast when unlocked after dismissing initial overlay */}
-      {hasDismissedOverlay && !isLocked && (
+      {hasDismissedOverlay && !isLocked && !isInventoryOpen && (
         <div
           onClick={() => engineRef.current.playerController?.lock()}
           className="absolute top-20 right-4 z-20 pointer-events-auto cursor-pointer"
@@ -558,7 +640,6 @@ export default function ThreeWorldCanvas() {
  * Procedurally generates the 3D base paved street, sidewalks, and environment blocks from the world grid
  */
 function rebuildStreetWorld(group, grid, domain) {
-  // Clear previous meshes
   while (group.children.length > 0) {
     const child = group.children[0];
     group.remove(child);
@@ -572,20 +653,14 @@ function rebuildStreetWorld(group, grid, domain) {
   const gridSize = grid.length;
   const isExterior = domain === DOMAINS.EXTERIOR;
 
-  // Base paved street/floor material
   const streetAsphaltMat = new THREE.MeshStandardMaterial({
     color: isExterior ? 0xe2e8f0 : 0xf8fafc,
     roughness: 0.7,
   });
 
   const sidewalkMat = new THREE.MeshStandardMaterial({
-    color: 0xfbd2d7, // Soft pastel coral-tinted sidewalk
+    color: 0xfbd2d7,
     roughness: 0.5,
-  });
-
-  const curbMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    roughness: 0.4,
   });
 
   const grassMat = new THREE.MeshStandardMaterial({
@@ -604,16 +679,6 @@ function rebuildStreetWorld(group, grid, domain) {
   const woodBoardwalkMat = new THREE.MeshStandardMaterial({
     color: 0xffd166,
     roughness: 0.6,
-  });
-
-  const buildingWallMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    roughness: 0.35,
-  });
-
-  const roofMat = new THREE.MeshStandardMaterial({
-    color: 0xff6b8b,
-    roughness: 0.35,
   });
 
   // Base Ground Plane
@@ -635,7 +700,6 @@ function rebuildStreetWorld(group, grid, domain) {
       const x = c;
       const z = r;
 
-      // Select material based on terrain
       let tileMat = streetAsphaltMat;
       let tileHeight = 0.12;
 
@@ -665,7 +729,7 @@ function rebuildStreetWorld(group, grid, domain) {
       tileMesh.userData = { isInteractable: true, tileX: x, tileZ: z };
       group.add(tileMesh);
 
-      // Paved road curb markings for cross-streets
+      // Paved road curb markings
       if ((r === 4 || r === 11 || c === 4 || c === 11) && isExterior) {
         const lineGeom = new THREE.PlaneGeometry(0.18, 0.6);
         lineGeom.rotateX(-Math.PI / 2);
@@ -698,7 +762,6 @@ function rebuildStreetWorld(group, grid, domain) {
           propColor = 0xffa07a;
         }
 
-        // Base building block
         const bGeom = new THREE.BoxGeometry(0.85, pHeight, 0.85);
         const bMat = new THREE.MeshStandardMaterial({ color: propColor, roughness: 0.4 });
         const bMesh = new THREE.Mesh(bGeom, bMat);
@@ -708,7 +771,6 @@ function rebuildStreetWorld(group, grid, domain) {
         bMesh.userData = { isInteractable: true, tileX: x, tileZ: z };
         group.add(bMesh);
 
-        // Roof pyramid/stud cap
         const roofGeom = new THREE.ConeGeometry(0.65, 0.6, 4);
         roofGeom.rotateY(Math.PI / 4);
         const roofMatLocal = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
@@ -729,7 +791,6 @@ function applyThemeEnvironment(engine, theme) {
   if (!scene) return;
 
   if (theme === 'midnight_dark') {
-    // Deep starry midnight indigo
     scene.background = new THREE.Color(0x0f172a);
     scene.fog = new THREE.FogExp2(0x0f172a, 0.022);
 
@@ -738,12 +799,11 @@ function applyThemeEnvironment(engine, theme) {
       ambientLight.intensity = 0.6;
     }
     if (sunLight) {
-      sunLight.color.setHex(0x93c5fd); // Pale moonlight
+      sunLight.color.setHex(0x93c5fd);
       sunLight.intensity = 0.8;
       sunLight.position.set(-15, 30, -10);
     }
   } else if (theme === 'soft_retro') {
-    // Golden hour sunset retro
     scene.background = new THREE.Color(0xfef3c7);
     scene.fog = new THREE.FogExp2(0xfef3c7, 0.015);
 
@@ -752,12 +812,11 @@ function applyThemeEnvironment(engine, theme) {
       ambientLight.intensity = 0.9;
     }
     if (sunLight) {
-      sunLight.color.setHex(0xfb923c); // Warm amber sunlight
+      sunLight.color.setHex(0xfb923c);
       sunLight.intensity = 1.3;
       sunLight.position.set(30, 25, 15);
     }
   } else {
-    // Default: Vibrant Pastel Dream
     scene.background = new THREE.Color(0xbde9ff);
     scene.fog = new THREE.FogExp2(0xbde9ff, 0.012);
 
