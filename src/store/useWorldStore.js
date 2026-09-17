@@ -43,8 +43,8 @@ let state = {
   // AI Chronicler Lore Cache
   chronicledLore: {},
 
-  // Active inspect
-  inspectedTile: { x: 7, y: 7, domain: DOMAINS.EXTERIOR },
+  // Active inspect (null by default so screen is clean)
+  inspectedTile: null,
 
   // Camera
   camera: { x: 0, y: 0, zoom: 1.0 },
@@ -103,7 +103,7 @@ export const worldStore = {
       exteriorGrid: freshExterior,
       interiorGrid: freshInterior,
       entities: createInitialEntities(GRID_SIZE),
-      inspectedTile: { x: 7, y: 7, domain: state.activeDomain },
+      inspectedTile: null,
       chronicledLore: {},
       activityLogs: [
         `🌱 World synthesized from seed "${cleanSeed}"!`,
@@ -328,7 +328,7 @@ export const worldStore = {
       ...state,
       ...(isExterior ? { exteriorGrid: newGrid } : { interiorGrid: newGrid }),
       chronicledLore: newLore,
-      inspectedTile: { x: centerX, y: centerY, domain: state.activeDomain },
+      inspectedTile: state.selectedTool === 'inspect' ? { x: centerX, y: centerY, domain: state.activeDomain } : state.inspectedTile,
     };
     emitChange();
   },

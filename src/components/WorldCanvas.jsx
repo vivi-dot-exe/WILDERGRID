@@ -724,10 +724,8 @@ export default function WorldCanvas() {
   let cursorClass = 'cursor-default';
   if (isSpacePressed || isDraggingRef.current) {
     cursorClass = isDraggingRef.current ? 'cursor-grabbing' : 'cursor-grab';
-  } else if (selectedTool === 'inspect') {
-    cursorClass = 'cursor-help';
-  } else if (selectedTool === 'place') {
-    cursorClass = 'cursor-crosshair';
+  } else {
+    cursorClass = 'cursor-pointer';
   }
 
   return (
