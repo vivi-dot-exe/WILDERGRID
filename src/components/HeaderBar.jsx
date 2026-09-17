@@ -28,6 +28,7 @@ export default function HeaderBar({ onOpenHelp }) {
     history,
     redoStack,
     seed,
+    avatarConfig,
   } = useWorldStore();
 
   const [showJsonModal, setShowJsonModal] = useState(false);
@@ -169,6 +170,31 @@ export default function HeaderBar({ onOpenHelp }) {
             <span>Room Interior</span>
           </button>
         </div>
+
+        {/* Player Avatar Profile Pill */}
+        <button
+          onClick={() => worldStore.openOnboarding()}
+          className="tropical-glass px-3 py-1.5 rounded-2xl flex items-center space-x-2 pointer-events-auto border border-white/80 shadow-tropical-md hover:scale-105 transition"
+          title="Customize Avatar & Game Settings"
+        >
+          <div
+            className="w-7 h-7 rounded-xl flex items-center justify-center text-white shadow-sm border border-white/90"
+            style={{ backgroundColor: avatarConfig?.topColor || '#ff6b8b' }}
+          >
+            <span
+              className="w-3 h-3 rounded-full"
+              style={{ backgroundColor: avatarConfig?.skinTone || '#ffd166' }}
+            />
+          </div>
+          <div className="text-left hidden lg:block">
+            <div className="text-xs font-bold text-slate-800 leading-tight">
+              {avatarConfig?.username || 'Builder'}
+            </div>
+            <div className="text-[9px] uppercase font-bold text-tropical-coral tracking-wider">
+              {avatarConfig?.gameMode || 'Creative'}
+            </div>
+          </div>
+        </button>
 
         {/* Action Controls */}
         <div className="tropical-glass p-1.5 rounded-2xl flex items-center space-x-1 pointer-events-auto border border-white/80 shadow-tropical-md">

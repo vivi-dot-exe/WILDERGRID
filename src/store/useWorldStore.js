@@ -11,6 +11,7 @@ import {
 import { soundManager } from '../utils/sound';
 import { createInitialEntities, ENTITY_CONFIGS } from '../types/entities';
 import { WEATHER_EVENTS, INITIAL_TICKER_LOGS } from '../utils/events';
+import { DEFAULT_AVATAR_CONFIG } from '../types/avatar';
 
 const DEFAULT_SEED = 'sunny-resort-villa';
 const GRID_SIZE = 16;
@@ -54,6 +55,10 @@ let state = {
   redoStack: [],
   soundMuted: false,
 
+  // Avatar & Onboarding
+  avatarConfig: DEFAULT_AVATAR_CONFIG,
+  showOnboarding: true,
+
   // Simulation
   isSimulating: true,
   simTicks: 0,
@@ -88,6 +93,31 @@ export const worldStore = {
   subscribe(listener) {
     listeners.add(listener);
     return () => listeners.delete(listener);
+  },
+
+  // Onboarding & Avatar
+  openOnboarding() {
+    state = { ...state, showOnboarding: true };
+    emitChange();
+  },
+
+  closeOnboarding() {
+    state = { ...state, showOnboarding: false };
+    emitChange();
+  },
+
+  saveAndEnterWorld(newConfig) {
+    state = {
+      ...state,
+      avatarConfig: newConfig,
+      showOnboarding: false,
+      activityLogs: [
+        `✨ Welcome ${newConfig.username} (${newConfig.gameMode.toUpperCase()} MODE) to Wildergrid!`,
+        ...state.activityLogs.slice(0, 6),
+      ],
+    };
+    soundManager.playPlaceTile('meadow');
+    emitChange();
   },
 
   // Seed Management

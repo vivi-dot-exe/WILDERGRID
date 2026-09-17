@@ -7,9 +7,12 @@ import CameraControls from './components/CameraControls';
 import SimulationEngine from './components/SimulationEngine';
 import HelpModal from './components/HelpModal';
 import EventTicker from './components/EventTicker';
+import OnboardingModal from './components/OnboardingModal';
+import { useWorldStore, worldStore } from './store/useWorldStore';
 
 export default function App() {
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const { showOnboarding } = useWorldStore();
 
   return (
     <main className="relative w-screen h-screen overflow-hidden bg-gradient-to-b from-[#5ec7f8] via-[#bde9ff] to-[#fff5ea] font-outfit text-slate-800 select-none">
@@ -36,6 +39,12 @@ export default function App() {
 
       {/* Controls & Lore Guide Modal */}
       <HelpModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
+
+      {/* Aesthetic Glassmorphic Onboarding & 3D Avatar Customizer Modal */}
+      <OnboardingModal
+        isOpen={showOnboarding}
+        onClose={() => worldStore.closeOnboarding()}
+      />
     </main>
   );
 }
