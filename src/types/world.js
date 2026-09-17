@@ -6,6 +6,7 @@ export const DOMAINS = {
 export const VIEW_MODES = {
   ISOMETRIC: 'isometric',
   TOP_DOWN: 'top_down',
+  WALK_3D: 'walk_3d',
 };
 
 // ==========================================

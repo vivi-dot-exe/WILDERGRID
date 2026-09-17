@@ -62,6 +62,15 @@ let state = {
   // Simulation
   isSimulating: true,
   simTicks: 0,
+
+  // 3D Lego Voxel Construction
+  legoBricks: [
+    { id: '4,0,4', x: 4, y: 0, z: 4, color: '#ff6b8b' },
+    { id: '4,1,4', x: 4, y: 1, z: 4, color: '#ffd166' },
+    { id: '5,0,4', x: 5, y: 0, z: 4, color: '#00bbf9' },
+    { id: '4,0,5', x: 4, y: 0, z: 5, color: '#2ec4b6' },
+  ],
+  legoSelectedColor: '#ff6b8b',
 };
 
 const listeners = new Set();
@@ -191,6 +200,43 @@ export const worldStore = {
   setViewMode(mode) {
     state = { ...state, viewMode: mode };
     soundManager.playClick();
+    emitChange();
+  },
+
+  // 3D Lego Voxel Actions
+  placeLegoBrick(x, y, z, color) {
+    const key = `${x},${y},${z}`;
+    const brickColor = color || state.legoSelectedColor || '#ff6b8b';
+    const existingIndex = state.legoBricks.findIndex(b => b.x === x && b.y === y && b.z === z);
+    const newBrick = { id: key, x, y, z, color: brickColor };
+    let newBricks;
+    if (existingIndex >= 0) {
+      newBricks = [...state.legoBricks];
+      newBricks[existingIndex] = newBrick;
+    } else {
+      newBricks = [...state.legoBricks, newBrick];
+    }
+    state = { ...state, legoBricks: newBricks };
+    soundManager.playPop();
+    emitChange();
+  },
+
+  removeLegoBrick(x, y, z) {
+    const newBricks = state.legoBricks.filter(b => !(b.x === x && b.y === y && b.z === z));
+    if (newBricks.length !== state.legoBricks.length) {
+      state = { ...state, legoBricks: newBricks };
+      soundManager.playClick();
+      emitChange();
+    }
+  },
+
+  setLegoSelectedColor(color) {
+    state = { ...state, legoSelectedColor: color };
+    emitChange();
+  },
+
+  clearLegoBricks() {
+    state = { ...state, legoBricks: [] };
     emitChange();
   },
 

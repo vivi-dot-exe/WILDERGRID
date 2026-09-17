@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useWorldStore, worldStore } from '../store/useWorldStore';
-import { DOMAINS } from '../types/world';
+import { DOMAINS, VIEW_MODES } from '../types/world';
 import { GAME_MODES } from '../types/avatar';
 import confetti from 'canvas-confetti';
 import {
@@ -17,7 +17,10 @@ import {
   HelpCircle,
   Camera,
   Key,
-  Shuffle
+  Shuffle,
+  Box,
+  Grid3X3,
+  Maximize2
 } from 'lucide-react';
 
 export default function HeaderBar({ onOpenHelp }) {
@@ -30,6 +33,7 @@ export default function HeaderBar({ onOpenHelp }) {
     redoStack,
     seed,
     avatarConfig,
+    viewMode,
   } = useWorldStore();
 
   const [showJsonModal, setShowJsonModal] = useState(false);
@@ -145,31 +149,76 @@ export default function HeaderBar({ onOpenHelp }) {
           </div>
         </div>
 
-        {/* Domain Switcher: Exterior City ↔ Room Interior */}
-        <div className="tropical-glass p-1.5 rounded-2xl flex items-center space-x-1 pointer-events-auto border border-white/80 shadow-tropical-md">
-          <button
-            onClick={() => worldStore.setDomain(DOMAINS.EXTERIOR)}
-            className={`px-4 py-2 rounded-xl text-xs font-semibold flex items-center space-x-2 transition-all ${
-              isExterior
-                ? 'bg-gradient-to-r from-[#ff6b8b] to-[#ffd166] text-white shadow-coral-glow scale-105'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-black/5'
-            }`}
-          >
-            <Palmtree className="w-4 h-4" />
-            <span>City Exterior</span>
-          </button>
+        {/* Center Control Group: Domain & View Switchers */}
+        <div className="flex items-center space-x-2 pointer-events-auto">
+          {/* Domain Switcher: Exterior City ↔ Room Interior */}
+          <div className="tropical-glass p-1.5 rounded-2xl flex items-center space-x-1 border border-white/80 shadow-tropical-md">
+            <button
+              onClick={() => worldStore.setDomain(DOMAINS.EXTERIOR)}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-all ${
+                isExterior
+                  ? 'bg-gradient-to-r from-[#ff6b8b] to-[#ffd166] text-white shadow-coral-glow scale-105'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-black/5'
+              }`}
+            >
+              <Palmtree className="w-3.5 h-3.5" />
+              <span>City</span>
+            </button>
 
-          <button
-            onClick={() => worldStore.setDomain(DOMAINS.INTERIOR)}
-            className={`px-4 py-2 rounded-xl text-xs font-semibold flex items-center space-x-2 transition-all ${
-              !isExterior
-                ? 'bg-gradient-to-r from-[#00bbf9] to-[#2ec4b6] text-white shadow-aqua-glow scale-105'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-black/5'
-            }`}
-          >
-            <Home className="w-4 h-4" />
-            <span>Room Interior</span>
-          </button>
+            <button
+              onClick={() => worldStore.setDomain(DOMAINS.INTERIOR)}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-all ${
+                !isExterior
+                  ? 'bg-gradient-to-r from-[#00bbf9] to-[#2ec4b6] text-white shadow-aqua-glow scale-105'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-black/5'
+              }`}
+            >
+              <Home className="w-3.5 h-3.5" />
+              <span>Interior</span>
+            </button>
+          </div>
+
+          {/* View Perspective Switcher: 2.5D, Top-Down, 3D Walkable */}
+          <div className="tropical-glass p-1.5 rounded-2xl flex items-center space-x-1 border border-white/80 shadow-tropical-md hidden md:flex">
+            <button
+              onClick={() => worldStore.setViewMode(VIEW_MODES.ISOMETRIC)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-all ${
+                viewMode === VIEW_MODES.ISOMETRIC
+                  ? 'bg-tropical-coral text-white shadow-coral-glow scale-102'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-black/5'
+              }`}
+              title="2.5D Isometric Overview"
+            >
+              <Box className="w-3.5 h-3.5" />
+              <span>2.5D</span>
+            </button>
+
+            <button
+              onClick={() => worldStore.setViewMode(VIEW_MODES.TOP_DOWN)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-all ${
+                viewMode === VIEW_MODES.TOP_DOWN
+                  ? 'bg-tropical-aqua text-white shadow-aqua-glow scale-102'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-black/5'
+              }`}
+              title="Top-Down Blueprint Grid"
+            >
+              <Grid3X3 className="w-3.5 h-3.5" />
+              <span>Top-Down</span>
+            </button>
+
+            <button
+              onClick={() => worldStore.setViewMode(VIEW_MODES.WALK_3D)}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all ${
+                viewMode === VIEW_MODES.WALK_3D
+                  ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-lg scale-105 ring-2 ring-emerald-300/60'
+                  : 'text-slate-700 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30'
+              }`}
+              title="Switch to 3D First/Third-Person Walkable Streets & Lego Construction"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-emerald-600 animate-pulse" />
+              <span>3D Walk & Build</span>
+            </button>
+          </div>
         </div>
 
         {/* Player Avatar Profile Pill */}

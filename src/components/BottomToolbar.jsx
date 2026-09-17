@@ -206,12 +206,20 @@ export default function BottomToolbar() {
 
             {/* View Mode */}
             <button
-              onClick={() => worldStore.setViewMode(viewMode === VIEW_MODES.ISOMETRIC ? VIEW_MODES.TOP_DOWN : VIEW_MODES.ISOMETRIC)}
+              onClick={() => {
+                if (viewMode === VIEW_MODES.ISOMETRIC) worldStore.setViewMode(VIEW_MODES.TOP_DOWN);
+                else if (viewMode === VIEW_MODES.TOP_DOWN) worldStore.setViewMode(VIEW_MODES.WALK_3D);
+                else worldStore.setViewMode(VIEW_MODES.ISOMETRIC);
+              }}
               className="p-1.5 rounded-xl text-slate-600 hover:bg-black/5 transition text-xs font-medium flex items-center space-x-1"
-              title="Toggle 2.5D Isometric / Top-Down View"
+              title="Cycle Views: 2.5D Isometric → Top-Down → 3D Walk"
             >
-              {viewMode === VIEW_MODES.ISOMETRIC ? <Box className="w-4 h-4 text-tropical-coral" /> : <Grid3X3 className="w-4 h-4 text-tropical-aqua" />}
-              <span className="hidden md:inline">{viewMode === VIEW_MODES.ISOMETRIC ? '2.5D' : 'Top-Down'}</span>
+              {viewMode === VIEW_MODES.ISOMETRIC && <Box className="w-4 h-4 text-tropical-coral" />}
+              {viewMode === VIEW_MODES.TOP_DOWN && <Grid3X3 className="w-4 h-4 text-tropical-aqua" />}
+              {viewMode === VIEW_MODES.WALK_3D && <Sparkles className="w-4 h-4 text-emerald-500" />}
+              <span className="hidden md:inline">
+                {viewMode === VIEW_MODES.ISOMETRIC ? '2.5D' : viewMode === VIEW_MODES.TOP_DOWN ? 'Top-Down' : '3D Walk'}
+              </span>
             </button>
 
             {/* Brush Size */}
