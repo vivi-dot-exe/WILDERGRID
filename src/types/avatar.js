@@ -2,7 +2,7 @@ export const GAME_MODES = {
   hearthkeeper: {
     id: 'hearthkeeper',
     name: 'Hearthkeeper',
-    subtitle: 'Survival Alternative',
+    subtitle: 'Survival',
     shortKeywords: 'Cozy Survival • Warmth • Foraging',
     keywords: ['Cozy Survival', 'Warmth & Comfort', 'Foraging'],
     description: 'The classic wilderness loop reimagined with cozy stakes. Manage warmth and comfort, forage berries, and tend campfires against gentle mischief-makers.',
@@ -15,7 +15,7 @@ export const GAME_MODES = {
   dreamweaver: {
     id: 'dreamweaver',
     name: 'Dreamweaver',
-    subtitle: 'Creative Alternative',
+    subtitle: 'Creative',
     shortKeywords: 'Infinite Blocks • Weightless • Toybox',
     keywords: ['Infinite Creative', 'Weightless Flight', 'Infinite Toybox'],
     description: 'A zero-consequence open-ended paradise. Float weightlessly and snap pastel tiles, glowing lanterns, and candy foliage instantly.',
@@ -28,7 +28,7 @@ export const GAME_MODES = {
   iron_thread: {
     id: 'iron_thread',
     name: 'Iron-Thread',
-    subtitle: 'Hardcore Alternative',
+    subtitle: 'Hardcore',
     shortKeywords: 'Fragile Thread • Peril • Permadeath',
     keywords: ['Fragile Thread', 'Permadeath', 'High Peril'],
     description: 'High stakes in delicate aesthetics. Journey tied to a single shimmering thread—if it snaps, your story permanently closes as a stone monument.',
@@ -41,7 +41,7 @@ export const GAME_MODES = {
   wayfarer: {
     id: 'wayfarer',
     name: 'Wayfarer',
-    subtitle: 'Adventure Alternative',
+    subtitle: 'Adventure',
     shortKeywords: 'Story Villages • Puzzles • Relics',
     keywords: ['Story Quests', 'Puzzles & Riddles', 'Lost Relics'],
     description: 'Narrative exploration and handcrafted riddles. Interact through magical trinkets, keys, and dialogue to restore ancient clocktowers.',
@@ -54,7 +54,7 @@ export const GAME_MODES = {
   gossamer_spirit: {
     id: 'gossamer_spirit',
     name: 'Gossamer Spirit',
-    subtitle: 'Spectator Alternative',
+    subtitle: 'Spectator',
     shortKeywords: 'Invisible Breeze • Spectator • Leylines',
     keywords: ['Invisible Breeze', 'Spectator Cam', 'Hidden Leylines'],
     description: 'Drift as an invisible breeze or glowing firefly. Peek under mushroom caps and observe animal migrations and secret geode caves without disturbing a leaf.',
