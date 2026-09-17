@@ -3,153 +3,45 @@ import {
   DOMAINS,
   VIEW_MODES,
   ALL_ITEMS,
-  EXTERIOR_ITEMS,
-  INTERIOR_ITEMS,
 } from '../types/world';
+import {
+  generateSeededExteriorGrid,
+  generateSeededInteriorGrid,
+} from '../utils/procedural';
 import { soundManager } from '../utils/sound';
+import { createInitialEntities, ENTITY_CONFIGS } from '../types/entities';
+import { WEATHER_EVENTS, INITIAL_TICKER_LOGS } from '../utils/events';
 
+const DEFAULT_SEED = 'sunny-resort-villa';
 const GRID_SIZE = 16;
 const INTERIOR_GRID_SIZE = 12;
-
-// Generate the initial Exterior Resort City directly inspired by the user's reference photo!
-function createInitialExteriorGrid() {
-  const grid = [];
-  for (let y = 0; y < GRID_SIZE; y++) {
-    const row = [];
-    for (let x = 0; x < GRID_SIZE; x++) {
-      row.push({
-        x,
-        y,
-        base: 'ground_sand',
-        prop: null,
-        elevation: 0,
-        metadata: {},
-      });
-    }
-    grid.push(row);
-  }
-
-  // 1. Surrounding pool and boardwalk
-  for (let x = 1; x <= 4; x++) {
-    for (let y = 1; y <= 4; y++) {
-      grid[y][x].base = 'ground_pool';
-    }
-  }
-  for (let x = 1; x <= 5; x++) {
-    grid[5][x].base = 'ground_boardwalk';
-  }
-
-  // 2. Center Terrace Patio
-  for (let y = 5; y <= 11; y++) {
-    for (let x = 5; x <= 11; x++) {
-      grid[y][x].base = 'ground_patio';
-    }
-  }
-
-  // 3. Villa Architecture modules (From Reference Image!)
-  // Coral Pink Pavilion (Center-Left)
-  grid[7][7].prop = 'arch_pink_pavilion';
-  grid[7][7].elevation = 2;
-  grid[7][8].prop = 'arch_pink_pavilion';
-  grid[7][8].elevation = 2;
-
-  // Aqua Cylindrical Tower (Upper-Right)
-  grid[6][9].prop = 'arch_blue_tower';
-  grid[6][9].elevation = 3;
-
-  // Sunshine Yellow Curved Terrace (Lower-Right)
-  grid[9][9].prop = 'arch_yellow_terrace';
-  grid[9][9].elevation = 1;
-  grid[9][8].prop = 'arch_yellow_terrace';
-  grid[9][8].elevation = 1;
-
-  // Glass Wall Atrium (Ground-Left)
-  grid[8][6].prop = 'arch_glass_atrium';
-  grid[8][6].elevation = 1;
-
-  // Yellow Architectural Stairs (Center foreground connecting decks)
-  grid[10][8].prop = 'arch_yellow_stairs';
-  grid[10][8].elevation = 1;
-
-  // 4. Tropical Palm Trees (Matching reference photo background and borders!)
-  const palmCoords = [
-    [2, 8], [3, 11], [13, 3], [14, 6], [13, 10], [14, 13], [6, 3], [10, 2], [1, 14]
-  ];
-  palmCoords.forEach(([px, py]) => {
-    if (grid[py] && grid[py][px]) {
-      grid[py][px].prop = (px % 2 === 0) ? 'flora_royal_palm' : 'flora_coconut_palm';
-    }
-  });
-
-  // Bougainvillea & White Boulders at the base
-  if (grid[10] && grid[10][7]) grid[10][7].prop = 'flora_bougainvillea';
-  if (grid[10] && grid[10][9]) grid[10][9].prop = 'flora_white_boulders';
-  if (grid[11] && grid[11][7]) grid[11][7].prop = 'flora_white_boulders';
-
-  // Sun cabana near pool
-  if (grid[3] && grid[5]) grid[3][5].prop = 'amenity_sun_cabana';
-
-  return grid;
-}
-
-// Generate the initial Interior Room
-function createInitialInteriorGrid() {
-  const grid = [];
-  for (let y = 0; y < INTERIOR_GRID_SIZE; y++) {
-    const row = [];
-    for (let x = 0; x < INTERIOR_GRID_SIZE; x++) {
-      row.push({
-        x,
-        y,
-        base: 'int_floor_terrazzo',
-        prop: null,
-        elevation: 0,
-        metadata: {},
-      });
-    }
-    grid.push(row);
-  }
-
-  // Back and left walls
-  for (let x = 0; x < INTERIOR_GRID_SIZE; x++) {
-    grid[0][x].prop = (x > 3 && x < 8) ? 'int_wall_glass' : 'int_wall_pink';
-  }
-  for (let y = 1; y < INTERIOR_GRID_SIZE - 2; y++) {
-    grid[y][0].prop = 'int_wall_glass';
-  }
-
-  // Kitchen Area
-  grid[3][8].prop = 'int_kitchen_island';
-  grid[4][8].prop = 'int_bar_stool';
-  grid[2][10].prop = 'int_fridge_retro';
-
-  // Living Area
-  grid[5][4].prop = 'int_sofa_curved';
-  grid[6][4].prop = 'int_table_coffee';
-  grid[6][3].prop = 'int_chair_bubble';
-  grid[4][2].prop = 'int_tv_console';
-  grid[3][1].prop = 'int_lamp_sunset';
-
-  // Decor & Plants
-  grid[1][1].prop = 'int_plant_monstera';
-  grid[1][7].prop = 'int_plant_fig';
-  grid[1][10].prop = 'int_neon_sign';
-  grid[7][2].prop = 'int_record_player';
-
-  return grid;
-}
 
 let state = {
   activeDomain: DOMAINS.EXTERIOR, // 'exterior' | 'interior'
   viewMode: VIEW_MODES.ISOMETRIC,
-  selectedTool: 'place', // 'place', 'inspect', 'erase', 'elev_up', 'elev_down'
+  selectedTool: 'place',
   selectedCategory: 'all',
   selectedItemId: 'flora_royal_palm',
   brushSize: 1,
 
+  // Seed
+  seed: DEFAULT_SEED,
+
   // Grids
-  exteriorGrid: createInitialExteriorGrid(),
-  interiorGrid: createInitialInteriorGrid(),
+  exteriorGrid: generateSeededExteriorGrid(GRID_SIZE, DEFAULT_SEED),
+  interiorGrid: generateSeededInteriorGrid(INTERIOR_GRID_SIZE, 'cozy-penthouse'),
+
+  // Autonomous NPCs
+  entities: createInitialEntities(GRID_SIZE),
+
+  // Weather & Events
+  currentWeather: WEATHER_EVENTS[0],
+  weatherIndex: 0,
+  weatherCountdown: 60,
+  activityLogs: [...INITIAL_TICKER_LOGS],
+
+  // AI Chronicler Lore Cache
+  chronicledLore: {},
 
   // Active inspect
   inspectedTile: { x: 7, y: 7, domain: DOMAINS.EXTERIOR },
@@ -163,7 +55,7 @@ let state = {
   soundMuted: false,
 
   // Simulation
-  isSimulating: false,
+  isSimulating: true,
   simTicks: 0,
 };
 
@@ -198,6 +90,30 @@ export const worldStore = {
     return () => listeners.delete(listener);
   },
 
+  // Seed Management
+  loadFromSeed(seedStr) {
+    pushHistory();
+    const cleanSeed = (seedStr || 'paradise-haven').trim();
+    const freshExterior = generateSeededExteriorGrid(GRID_SIZE, cleanSeed);
+    const freshInterior = generateSeededInteriorGrid(INTERIOR_GRID_SIZE, cleanSeed + '-room');
+
+    state = {
+      ...state,
+      seed: cleanSeed,
+      exteriorGrid: freshExterior,
+      interiorGrid: freshInterior,
+      entities: createInitialEntities(GRID_SIZE),
+      inspectedTile: { x: 7, y: 7, domain: state.activeDomain },
+      chronicledLore: {},
+      activityLogs: [
+        `🌱 World synthesized from seed "${cleanSeed}"!`,
+        ...state.activityLogs.slice(0, 5),
+      ],
+    };
+    soundManager.playPlaceTile('crystal');
+    emitChange();
+  },
+
   // Domain Switching: City Exterior vs Room Interior
   setDomain(domain) {
     if (state.activeDomain === domain) return;
@@ -214,7 +130,6 @@ export const worldStore = {
     emitChange();
   },
 
-  // Navigation & Tools
   setSelectedTool(tool) {
     state = { ...state, selectedTool: tool };
     soundManager.playClick();
@@ -256,6 +171,105 @@ export const worldStore = {
     emitChange();
   },
 
+  // Weather & Activity Events
+  triggerNextWeather() {
+    const nextIdx = (state.weatherIndex + 1) % WEATHER_EVENTS.length;
+    const event = WEATHER_EVENTS[nextIdx];
+
+    state = {
+      ...state,
+      weatherIndex: nextIdx,
+      currentWeather: event,
+      weatherCountdown: 60,
+      activityLogs: [
+        event.narrative,
+        ...state.activityLogs.slice(0, 8),
+      ],
+    };
+    soundManager.playPlaceTile('peak');
+    emitChange();
+  },
+
+  decrementWeatherTimer() {
+    if (state.weatherCountdown <= 1) {
+      this.triggerNextWeather();
+    } else {
+      state = { ...state, weatherCountdown: state.weatherCountdown - 1 };
+      emitChange();
+    }
+  },
+
+  addActivityLog(message) {
+    state = {
+      ...state,
+      activityLogs: [message, ...state.activityLogs.slice(0, 8)],
+    };
+    emitChange();
+  },
+
+  // NPC Movement & Pathfinding Tick
+  updateEntities() {
+    const speedMult = state.currentWeather?.creatureSpeedMultiplier || 1.0;
+    const isExterior = state.activeDomain === DOMAINS.EXTERIOR;
+    const currentGrid = isExterior ? state.exteriorGrid : state.interiorGrid;
+    const maxCoord = isExterior ? GRID_SIZE : INTERIOR_GRID_SIZE;
+
+    const updated = state.entities.map((npc) => {
+      let { x, y, targetX, targetY, t, speed, bouncePhase, altitude } = npc;
+
+      t += speed * speedMult;
+      bouncePhase += 0.05;
+
+      if (t >= 1) {
+        // Arrived at target, choose new neighboring coordinate
+        x = targetX;
+        y = targetY;
+        t = 0;
+
+        const dirs = [
+          [0, 1], [1, 0], [0, -1], [-1, 0],
+          [1, 1], [-1, -1], [1, -1], [-1, 1]
+        ];
+        const validDirs = dirs.filter(([dx, dy]) => {
+          const nx = x + dx;
+          const ny = y + dy;
+          return nx >= 0 && nx < maxCoord && ny >= 0 && ny < maxCoord;
+        });
+
+        if (validDirs.length > 0) {
+          const [pickDx, pickDy] = validDirs[Math.floor(Math.random() * validDirs.length)];
+          targetX = x + pickDx;
+          targetY = y + pickDy;
+        }
+      }
+
+      return {
+        ...npc,
+        x,
+        y,
+        targetX,
+        targetY,
+        t,
+        bouncePhase,
+      };
+    });
+
+    state = { ...state, entities: updated };
+    emitChange();
+  },
+
+  // AI Chronicler Lore Cache
+  setChronicledLore(key, lore) {
+    state = {
+      ...state,
+      chronicledLore: {
+        ...state.chronicledLore,
+        [key]: lore,
+      },
+    };
+    emitChange();
+  },
+
   // Tile Placement & Mutation
   placeItem(centerX, centerY) {
     const isExterior = state.activeDomain === DOMAINS.EXTERIOR;
@@ -275,7 +289,6 @@ export const worldStore = {
         const ty = centerY + dy;
         if (tx >= 0 && tx < maxCoord && ty >= 0 && ty < maxCoord) {
           if (state.selectedTool === 'erase') {
-            // Erase prop first, or reset base
             if (newGrid[ty][tx].prop) {
               newGrid[ty][tx].prop = null;
             } else {
@@ -290,7 +303,6 @@ export const worldStore = {
             if (activeItem.type === 'terrain' || activeItem.type === 'floor') {
               newGrid[ty][tx].base = activeItem.id;
             } else {
-              // Building, Prop, Furniture, Wall
               newGrid[ty][tx].prop = activeItem.id;
               if (activeItem.elevation !== undefined) {
                 newGrid[ty][tx].elevation = activeItem.elevation;
@@ -307,9 +319,15 @@ export const worldStore = {
       soundManager.playPlaceTile(isExterior ? 'meadow' : 'crystal');
     }
 
+    // Invalidate cached lore for this sector
+    const coordKey = `[${centerX}, ${centerY}]`;
+    const newLore = { ...state.chronicledLore };
+    delete newLore[coordKey];
+
     state = {
       ...state,
       ...(isExterior ? { exteriorGrid: newGrid } : { interiorGrid: newGrid }),
+      chronicledLore: newLore,
       inspectedTile: { x: centerX, y: centerY, domain: state.activeDomain },
     };
     emitChange();
@@ -350,7 +368,6 @@ export const worldStore = {
     emitChange();
   },
 
-  // Camera
   setCamera(x, y, zoom) {
     state = {
       ...state,
@@ -372,7 +389,6 @@ export const worldStore = {
     emitChange();
   },
 
-  // Undo / Redo
   undo() {
     if (state.history.length === 0) return;
     const previous = state.history[state.history.length - 1];
@@ -407,61 +423,14 @@ export const worldStore = {
     emitChange();
   },
 
-  // Reset / Presets
-  loadPreset(preset) {
-    pushHistory();
-    if (preset === 'villa') {
-      state = {
-        ...state,
-        exteriorGrid: createInitialExteriorGrid(),
-        interiorGrid: createInitialInteriorGrid(),
-      };
-    } else if (preset === 'clear') {
-      const isExterior = state.activeDomain === DOMAINS.EXTERIOR;
-      const size = isExterior ? GRID_SIZE : INTERIOR_GRID_SIZE;
-      const emptyGrid = [];
-      for (let y = 0; y < size; y++) {
-        const row = [];
-        for (let x = 0; x < size; x++) {
-          row.push({
-            x,
-            y,
-            base: isExterior ? 'ground_sand' : 'int_floor_terrazzo',
-            prop: null,
-            elevation: 0,
-            metadata: {},
-          });
-        }
-        emptyGrid.push(row);
-      }
-      state = {
-        ...state,
-        ...(isExterior ? { exteriorGrid: emptyGrid } : { interiorGrid: emptyGrid }),
-        inspectedTile: null,
-      };
-    }
-    soundManager.playPlaceTile('crystal');
-    emitChange();
-  },
-
-  // Simulation
-  toggleSimulation() {
-    state = { ...state, isSimulating: !state.isSimulating };
-    soundManager.playClick();
-    emitChange();
-  },
-
-  tickSimulation() {
-    state = { ...state, simTicks: state.simTicks + 1 };
-    emitChange();
-  },
-
   exportWorldJSON() {
     return JSON.stringify({
-      version: '2.0',
+      version: '3.0',
+      seed: state.seed,
       timestamp: new Date().toISOString(),
       exteriorGrid: state.exteriorGrid,
       interiorGrid: state.interiorGrid,
+      chronicledLore: state.chronicledLore,
     }, null, 2);
   },
 
@@ -472,8 +441,10 @@ export const worldStore = {
         pushHistory();
         state = {
           ...state,
+          seed: data.seed || 'imported-haven',
           ...(data.exteriorGrid ? { exteriorGrid: data.exteriorGrid } : {}),
           ...(data.interiorGrid ? { interiorGrid: data.interiorGrid } : {}),
+          ...(data.chronicledLore ? { chronicledLore: data.chronicledLore } : {}),
           inspectedTile: null,
         };
         soundManager.playPlaceTile('meadow');

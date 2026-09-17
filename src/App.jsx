@@ -6,6 +6,7 @@ import InspectorDrawer from './components/InspectorDrawer';
 import CameraControls from './components/CameraControls';
 import SimulationEngine from './components/SimulationEngine';
 import HelpModal from './components/HelpModal';
+import EventTicker from './components/EventTicker';
 
 export default function App() {
   const [isHelpOpen, setIsHelpOpen] = useState(false);
@@ -17,6 +18,9 @@ export default function App() {
 
       {/* Top Header Navigation */}
       <HeaderBar onOpenHelp={() => setIsHelpOpen(true)} />
+
+      {/* Real-time Weather & Narrative Activity Ticker */}
+      <EventTicker />
 
       {/* Interactive Canvas Grid (Isometric 2.5D & Top-down) */}
       <WorldCanvas />

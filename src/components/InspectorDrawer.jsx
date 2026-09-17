@@ -1,31 +1,65 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useWorldStore, worldStore } from '../store/useWorldStore';
 import { DOMAINS, ALL_ITEMS } from '../types/world';
+import { generateLoreForSector } from '../utils/chroniclerAI';
 import {
   X,
   MapPin,
   Mountain,
-  Layers,
   Sparkles,
   ArrowUp,
   ArrowDown,
   Trash2,
   Home,
-  Palmtree
+  Bot,
+  RefreshCw,
+  HeartHandshake,
+  AlertCircle,
+  BookOpen
 } from 'lucide-react';
 
 export default function InspectorDrawer() {
-  const { inspectedTile, activeDomain, exteriorGrid, interiorGrid } = useWorldStore();
+  const { inspectedTile, activeDomain, exteriorGrid, interiorGrid, chronicledLore } = useWorldStore();
+  const [lore, setLore] = useState(null);
+  const [isGeneratingLore, setIsGeneratingLore] = useState(false);
 
-  if (!inspectedTile) return null;
-
-  const { x, y, domain } = inspectedTile;
-  const isExterior = domain === DOMAINS.EXTERIOR;
+  const isExterior = inspectedTile?.domain === DOMAINS.EXTERIOR;
   const grid = isExterior ? exteriorGrid : interiorGrid;
-  const tile = grid[y]?.[x];
+  const tile = inspectedTile ? grid[inspectedTile.y]?.[inspectedTile.x] : null;
 
-  if (!tile) return null;
+  const coordKey = inspectedTile ? `[${inspectedTile.x}, ${inspectedTile.y}]` : null;
 
+  // Generate / Load chronicled lore on tile change
+  useEffect(() => {
+    if (!inspectedTile || !tile) {
+      setLore(null);
+      return;
+    }
+
+    if (chronicledLore[coordKey]) {
+      setLore(chronicledLore[coordKey]);
+    } else {
+      handleFetchLore();
+    }
+  }, [coordKey, inspectedTile?.domain]);
+
+  const handleFetchLore = async () => {
+    if (!tile) return;
+    setIsGeneratingLore(true);
+    try {
+      const generated = await generateLoreForSector(tile, activeDomain);
+      setLore(generated);
+      worldStore.setChronicledLore(coordKey, generated);
+    } catch (e) {
+      console.error('Error chronicling lore:', e);
+    } finally {
+      setIsGeneratingLore(false);
+    }
+  };
+
+  if (!inspectedTile || !tile) return null;
+
+  const { x, y } = inspectedTile;
   const baseItem = ALL_ITEMS[tile.base] || ALL_ITEMS['ground_sand'];
   const propItem = tile.prop ? ALL_ITEMS[tile.prop] : null;
 
@@ -39,7 +73,7 @@ export default function InspectorDrawer() {
   };
 
   return (
-    <aside className="absolute right-4 top-20 bottom-28 w-80 z-20 pointer-events-none animate-float-slow">
+    <aside className="absolute right-4 top-20 bottom-28 w-88 z-20 pointer-events-none animate-float-slow">
       <div className="tropical-glass w-full h-full rounded-3xl p-5 pointer-events-auto border border-white/80 shadow-tropical-lg flex flex-col justify-between overflow-y-auto backdrop-blur-xl">
 
         {/* Top Header */}
@@ -62,28 +96,89 @@ export default function InspectorDrawer() {
             </button>
           </div>
 
+          {/* ==================================================== */}
+          {/* Phase 2: World Chronicler AI Lore Panel */}
+          {/* ==================================================== */}
+          <div className="tropical-card p-3.5 rounded-2xl mb-4 border border-tropical-coral/30 bg-gradient-to-br from-white via-white to-pink-50/50 shadow-sm relative overflow-hidden">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center space-x-1.5 text-tropical-coral">
+                <Bot className="w-4 h-4" />
+                <span className="text-[11px] font-bold uppercase tracking-wider">World Chronicler AI</span>
+              </div>
+              <button
+                onClick={handleFetchLore}
+                disabled={isGeneratingLore}
+                className="p-1 rounded-lg hover:bg-black/5 text-slate-400 hover:text-tropical-coral transition disabled:opacity-50"
+                title="Re-chronicle Sector"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isGeneratingLore ? 'animate-spin text-tropical-coral' : ''}`} />
+              </button>
+            </div>
+
+            {lore ? (
+              <div className="space-y-2 text-xs">
+                {/* Island / Sector Name */}
+                <h3 className="font-fredoka text-sm font-bold text-slate-800 leading-snug">
+                  "{lore.islandName}"
+                </h3>
+
+                {/* Micro-Narrative */}
+                <div className="bg-white/80 p-2.5 rounded-xl border border-black/5 text-[11px] text-slate-600 italic leading-relaxed">
+                  <BookOpen className="w-3 h-3 text-tropical-coral inline mr-1 -mt-0.5" />
+                  {lore.narrative}
+                </div>
+
+                {/* Inhabitant Species */}
+                <div>
+                  <div className="text-[10px] font-bold uppercase text-slate-400 mb-1">Inhabitant Species:</div>
+                  <div className="flex flex-wrap gap-1">
+                    {lore.species.map((sp, idx) => (
+                      <span
+                        key={idx}
+                        className="text-[10px] px-2 py-0.5 rounded-full bg-tropical-aqua/15 text-slate-700 font-medium border border-tropical-aqua/30"
+                        title={sp.trait}
+                      >
+                        {sp.name} <span className="opacity-60">({sp.type})</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Environmental Synergy */}
+                <div className="pt-1">
+                  <div className="text-[10px] font-bold uppercase text-emerald-600 flex items-center space-x-1">
+                    <HeartHandshake className="w-3 h-3" />
+                    <span>Environmental Synergy</span>
+                  </div>
+                  <p className="text-[10px] text-slate-600 mt-0.5 leading-snug">
+                    {lore.synergy}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="py-4 text-center">
+                <p className="text-xs text-slate-400 animate-pulse">Chronicling whimsical lore...</p>
+              </div>
+            )}
+          </div>
+
           {/* Placed Architecture / Prop Card */}
-          {propItem ? (
-            <div className="tropical-card p-3.5 rounded-2xl mb-4 border border-white/90 relative overflow-hidden">
-              <div
-                className="w-3 h-3 rounded-full absolute top-3.5 right-3.5"
-                style={{ backgroundColor: propItem.colors?.top || propItem.colors?.main || '#ff6b8b' }}
-              />
+          {propItem && (
+            <div className="tropical-card p-3 rounded-2xl mb-3 border border-white/90">
               <span className="text-[10px] uppercase font-bold text-tropical-coral tracking-wider">
                 Placed Structure / Prop
               </span>
-              <h2 className="font-fredoka text-base font-bold text-slate-800 mt-0.5">
+              <h2 className="font-fredoka text-sm font-bold text-slate-800 mt-0.5">
                 {propItem.name}
               </h2>
-              <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+              <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
                 {propItem.description}
               </p>
 
-              {/* Step Inside Room button if building */}
               {propItem.hasInterior && isExterior && (
                 <button
                   onClick={() => worldStore.setDomain(DOMAINS.INTERIOR)}
-                  className="mt-3 w-full py-2 px-3 rounded-xl bg-gradient-to-r from-tropical-aqua to-tropical-mint text-white font-semibold text-xs flex items-center justify-center space-x-1.5 shadow-aqua-glow transition hover:opacity-95"
+                  className="mt-2.5 w-full py-2 px-3 rounded-xl bg-gradient-to-r from-tropical-aqua to-tropical-mint text-white font-semibold text-xs flex items-center justify-center space-x-1.5 shadow-aqua-glow transition hover:opacity-95"
                 >
                   <Home className="w-3.5 h-3.5" />
                   <span>Step Inside Villa Room</span>
@@ -92,42 +187,35 @@ export default function InspectorDrawer() {
 
               <button
                 onClick={handleRemoveProp}
-                className="mt-2.5 w-full py-1.5 px-3 rounded-xl text-xs font-medium text-rose-500 hover:bg-rose-50 border border-rose-200/60 flex items-center justify-center space-x-1 transition"
+                className="mt-2 w-full py-1 px-3 rounded-xl text-xs font-medium text-rose-500 hover:bg-rose-50 border border-rose-200/60 flex items-center justify-center space-x-1 transition"
               >
                 <Trash2 className="w-3 h-3" />
                 <span>Remove Item</span>
               </button>
             </div>
-          ) : (
-            <div className="tropical-card p-3 rounded-2xl mb-4 text-center">
-              <p className="text-xs text-slate-400 italic">No structure placed on this sector.</p>
-            </div>
           )}
 
-          {/* Base Terrain / Flooring Card */}
-          <div className="tropical-card p-3.5 rounded-2xl mb-4 border border-white/90">
+          {/* Base Terrain Card */}
+          <div className="tropical-card p-3 rounded-2xl mb-3 border border-white/90">
             <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
               {isExterior ? 'Base Ground' : 'Floor Surface'}
             </span>
             <div className="flex items-center space-x-2 mt-1">
               <div
-                className="w-4 h-4 rounded-lg shadow-sm"
+                className="w-3.5 h-3.5 rounded-lg shadow-sm"
                 style={{ backgroundColor: baseItem.colors?.top || '#fff6ed' }}
               />
-              <span className="text-sm font-bold text-slate-800">
+              <span className="text-xs font-bold text-slate-800">
                 {baseItem.name}
               </span>
             </div>
-            <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-              {baseItem.description}
-            </p>
           </div>
 
-          {/* Elevation Level Controls */}
-          <div className="tropical-card p-3 rounded-2xl flex items-center justify-between">
+          {/* Elevation Controls */}
+          <div className="tropical-card p-2.5 rounded-2xl flex items-center justify-between">
             <div className="flex items-center space-x-2 text-xs font-bold text-slate-700">
-              <Mountain className="w-4 h-4 text-tropical-coral" />
-              <span>Elevation Level</span>
+              <Mountain className="w-3.5 h-3.5 text-tropical-coral" />
+              <span>Elevation Tier</span>
             </div>
             <div className="flex items-center space-x-2">
               <span className="font-mono text-xs font-bold text-slate-800">
@@ -155,23 +243,13 @@ export default function InspectorDrawer() {
           </div>
         </div>
 
-        {/* Quick Mode Switch shortcut */}
-        <div className="pt-3 border-t border-black/5 mt-3">
+        {/* Domain Switch Button */}
+        <div className="pt-2 border-t border-black/5 mt-2">
           <button
             onClick={() => worldStore.setDomain(isExterior ? DOMAINS.INTERIOR : DOMAINS.EXTERIOR)}
-            className="w-full py-2.5 rounded-2xl text-xs font-bold flex items-center justify-center space-x-2 bg-gradient-to-r from-tropical-coral to-tropical-yellow text-white shadow-coral-glow transition hover:opacity-95"
+            className="w-full py-2 rounded-2xl text-xs font-bold flex items-center justify-center space-x-2 bg-gradient-to-r from-tropical-coral to-tropical-yellow text-white shadow-coral-glow transition hover:opacity-95"
           >
-            {isExterior ? (
-              <>
-                <Home className="w-4 h-4" />
-                <span>Switch to Room Interior</span>
-              </>
-            ) : (
-              <>
-                <Palmtree className="w-4 h-4" />
-                <span>Switch to City Exterior</span>
-              </>
-            )}
+            {isExterior ? <span>Switch to Room Interior</span> : <span>Switch to City Exterior</span>}
           </button>
         </div>
 

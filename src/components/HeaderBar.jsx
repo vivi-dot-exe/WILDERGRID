@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useWorldStore, worldStore } from '../store/useWorldStore';
-import { DOMAINS, ALL_ITEMS } from '../types/world';
+import { DOMAINS } from '../types/world';
 import confetti from 'canvas-confetti';
 import {
   Sparkles,
@@ -14,7 +14,9 @@ import {
   Download,
   Upload,
   HelpCircle,
-  LayoutGrid
+  Camera,
+  Key,
+  Shuffle
 } from 'lucide-react';
 
 export default function HeaderBar({ onOpenHelp }) {
@@ -25,21 +27,21 @@ export default function HeaderBar({ onOpenHelp }) {
     soundMuted,
     history,
     redoStack,
+    seed,
   } = useWorldStore();
 
   const [showJsonModal, setShowJsonModal] = useState(false);
+  const [showSeedModal, setShowSeedModal] = useState(false);
   const [jsonInput, setJsonInput] = useState('');
+  const [seedInput, setSeedInput] = useState(seed);
 
   const isExterior = activeDomain === DOMAINS.EXTERIOR;
   const currentGrid = isExterior ? exteriorGrid : interiorGrid;
 
-  // Count placed objects
   let propCount = 0;
-  let terrainCount = 0;
   currentGrid.forEach(row => {
     row.forEach(t => {
       if (t.prop) propCount++;
-      if (t.base) terrainCount++;
     });
   });
 
@@ -50,7 +52,7 @@ export default function HeaderBar({ onOpenHelp }) {
       origin: { y: 0.15 },
       colors: ['#ff6b8b', '#ffd166', '#00bbf9', '#2ec4b6']
     });
-    worldStore.loadPreset('villa');
+    worldStore.loadFromSeed(seed);
   };
 
   const handleExport = () => {
@@ -59,7 +61,7 @@ export default function HeaderBar({ onOpenHelp }) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `tropical-city-${activeDomain}-${Date.now()}.json`;
+    a.download = `wildergrid-${seed}-${Date.now()}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -70,6 +72,47 @@ export default function HeaderBar({ onOpenHelp }) {
       setJsonInput('');
     } else {
       alert('Invalid world data. Please check JSON format.');
+    }
+  };
+
+  const handleApplySeed = () => {
+    if (seedInput) {
+      worldStore.loadFromSeed(seedInput);
+      setShowSeedModal(false);
+    }
+  };
+
+  const handleRandomSeed = () => {
+    const randomSeeds = [
+      'sunny-lagoon-99', 'coral-citadel-7', 'azure-haven-42',
+      'whispering-palms-12', 'starlight-solaria-88', 'breezy-terrace-23'
+    ];
+    const picked = randomSeeds[Math.floor(Math.random() * randomSeeds.length)];
+    setSeedInput(picked);
+    worldStore.loadFromSeed(picked);
+    setShowSeedModal(false);
+  };
+
+  // Phase 4: Snapshot Mode - Clean canvas screenshot download
+  const handleTakeSnapshot = () => {
+    const canvas = document.getElementById('wildergrid-canvas');
+    if (!canvas) return;
+
+    try {
+      const dataUrl = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = `wildergrid-snapshot-${seed}-${Date.now()}.png`;
+      a.click();
+
+      confetti({
+        particleCount: 30,
+        spread: 50,
+        origin: { y: 0.2 },
+        colors: ['#ffd166', '#ff6b8b', '#00bbf9']
+      });
+    } catch (e) {
+      console.error('Failed to capture snapshot:', e);
     }
   };
 
@@ -86,12 +129,16 @@ export default function HeaderBar({ onOpenHelp }) {
               <h1 className="font-fredoka text-lg font-bold tracking-wide text-slate-800">
                 Wildergrid
               </h1>
-              <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-tropical-coral/15 text-tropical-coral border border-tropical-coral/30">
-                Tropical Resort & City
-              </span>
+              <button
+                onClick={() => { setSeedInput(seed); setShowSeedModal(true); }}
+                className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-tropical-coral/15 text-tropical-coral border border-tropical-coral/30 hover:bg-tropical-coral hover:text-white transition"
+                title="Change Procedural Seed"
+              >
+                Seed: {seed}
+              </button>
             </div>
             <p className="text-xs text-slate-500 font-medium">
-              {isExterior ? 'Exterior City & Architecture' : 'Interior Floorplan & Decor'} • {propCount} Placed Items
+              {isExterior ? 'Exterior City & Resort' : 'Interior Floorplan & Decor'} • {propCount} Placed Structures
             </p>
           </div>
         </div>
@@ -125,14 +172,32 @@ export default function HeaderBar({ onOpenHelp }) {
 
         {/* Action Controls */}
         <div className="tropical-glass p-1.5 rounded-2xl flex items-center space-x-1 pointer-events-auto border border-white/80 shadow-tropical-md">
-          {/* Reset to Tropical Villa */}
+          {/* Snapshot Camera Mode */}
+          <button
+            onClick={handleTakeSnapshot}
+            className="px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center space-x-1.5 bg-white/70 hover:bg-white text-slate-700 shadow-sm transition hover:scale-105"
+            title="Snapshot Mode: Download high-res canvas photo"
+          >
+            <Camera className="w-3.5 h-3.5 text-tropical-coral" />
+            <span className="hidden xl:inline">Snapshot</span>
+          </button>
+
+          {/* Seed Generator Modal */}
+          <button
+            onClick={() => { setSeedInput(seed); setShowSeedModal(true); }}
+            className="p-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-black/5 transition"
+            title="Procedural Seed Generator"
+          >
+            <Key className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Reset Seed */}
           <button
             onClick={handleResetVilla}
-            className="px-3 py-1.5 rounded-xl text-xs font-medium flex items-center space-x-1.5 hover:bg-black/5 text-slate-700 transition-all"
-            title="Reset to Tropical Villa & Penthouse"
+            className="p-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-black/5 transition"
+            title="Re-synthesize World from Seed"
           >
-            <RotateCcw className="w-3.5 h-3.5 text-tropical-coral" />
-            <span className="hidden lg:inline">Resort Preset</span>
+            <RotateCcw className="w-3.5 h-3.5" />
           </button>
 
           <div className="w-[1px] h-4 bg-black/10 mx-1" />
@@ -165,14 +230,14 @@ export default function HeaderBar({ onOpenHelp }) {
           <button
             onClick={handleExport}
             className="p-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-black/5 transition"
-            title="Export World JSON"
+            title="Export World State JSON"
           >
             <Download className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => setShowJsonModal(true)}
             className="p-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-black/5 transition"
-            title="Import World JSON"
+            title="Import World State JSON"
           >
             <Upload className="w-3.5 h-3.5" />
           </button>
@@ -197,11 +262,53 @@ export default function HeaderBar({ onOpenHelp }) {
         </div>
       </header>
 
-      {/* JSON Modal */}
+      {/* Seed Generator Modal */}
+      {showSeedModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="tropical-glass p-6 rounded-3xl w-full max-w-sm border border-white/80 shadow-2xl">
+            <h3 className="font-fredoka text-lg text-slate-800 mb-1">Procedural Seed</h3>
+            <p className="text-xs text-slate-600 mb-4">
+              Enter any word or number to deterministically generate a unique island layout.
+            </p>
+            <div className="flex space-x-2 mb-4">
+              <input
+                type="text"
+                className="flex-1 tropical-input rounded-2xl px-3 py-2 text-xs font-mono outline-none focus:border-tropical-coral"
+                value={seedInput}
+                onChange={(e) => setSeedInput(e.target.value)}
+                placeholder="e.g. sunny-haven-42"
+              />
+              <button
+                onClick={handleRandomSeed}
+                className="p-2 rounded-xl bg-white/70 hover:bg-white text-slate-700 shadow-sm"
+                title="Random Seed"
+              >
+                <Shuffle className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex justify-end space-x-2">
+              <button
+                onClick={() => setShowSeedModal(false)}
+                className="px-4 py-2 rounded-xl text-xs text-slate-600 hover:bg-black/5"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleApplySeed}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-tropical-coral text-white shadow-coral-glow"
+              >
+                Generate World
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* JSON Import Modal */}
       {showJsonModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
           <div className="tropical-glass p-6 rounded-3xl w-full max-w-md border border-white/80 shadow-2xl">
-            <h3 className="font-fredoka text-lg text-slate-800 mb-2">Import City / Room Design</h3>
+            <h3 className="font-fredoka text-lg text-slate-800 mb-2">Import World State</h3>
             <p className="text-xs text-slate-600 mb-4">
               Paste your exported JSON state below to restore terrain, architecture, and interior decor.
             </p>
@@ -214,13 +321,13 @@ export default function HeaderBar({ onOpenHelp }) {
             <div className="flex justify-end space-x-2 mt-4">
               <button
                 onClick={() => setShowJsonModal(false)}
-                className="px-4 py-2 rounded-xl text-xs text-slate-600 hover:bg-black/5 transition"
+                className="px-4 py-2 rounded-xl text-xs text-slate-600 hover:bg-black/5"
               >
                 Cancel
               </button>
               <button
                 onClick={handleImportSubmit}
-                className="px-4 py-2 rounded-xl text-xs font-semibold bg-tropical-coral hover:bg-tropical-coralLight text-white shadow-coral-glow transition"
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-tropical-coral text-white shadow-coral-glow"
               >
                 Load State
               </button>
