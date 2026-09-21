@@ -11,8 +11,14 @@ import {
 import { soundManager } from '../utils/sound';
 import { createInitialEntities, ENTITY_CONFIGS } from '../types/entities';
 import { WEATHER_EVENTS, INITIAL_TICKER_LOGS } from '../utils/events';
-import { DEFAULT_AVATAR_CONFIG } from '../types/avatar';
+import {
+  DEFAULT_AVATAR_CONFIG,
+  PRIMARY_GAME_MODES,
+  GAME_MODES,
+  isCreativeMode,
+} from '../types/avatar';
 import { DEFAULT_HOTBAR_SLOTS } from '../types/hotbar';
+import { multiplayerManager } from '../utils/multiplayer';
 
 const DEFAULT_SEED = 'sunny-resort-villa';
 const GRID_SIZE = 16;
@@ -55,22 +61,25 @@ let state = {
   history: [],
   redoStack: [],
   soundMuted: false,
+  soundVolume: 0.8,
+  mouseSensitivity: 1.0,
+  cameraSmoothing: true,
+  headBobbing: true,
 
-  // Avatar & Onboarding
+  // Avatar & Initial Modals
   avatarConfig: DEFAULT_AVATAR_CONFIG,
-  showOnboarding: true,
+  showOnboarding: false,
+  showLoginModal: true,
+  showLoadingScreen: false,
+  showAvatarStudio: false,
+  showSettingsModal: false,
 
   // Simulation
   isSimulating: true,
   simTicks: 0,
 
-  // 3D Lego Voxel Construction
-  legoBricks: [
-    { id: '4,0,4', x: 4, y: 0, z: 4, color: '#ff6b8b' },
-    { id: '4,1,4', x: 4, y: 1, z: 4, color: '#ffd166' },
-    { id: '5,0,4', x: 5, y: 0, z: 4, color: '#00bbf9' },
-    { id: '4,0,5', x: 4, y: 0, z: 5, color: '#2ec4b6' },
-  ],
+  // 3D Lego Voxel Construction - Pristine world with open building canvas
+  legoBricks: [],
   legoSelectedColor: '#ff6b8b',
 
   // 9-Slot Hotbar & Inventory
@@ -82,6 +91,18 @@ let state = {
   playerHealth: 20, // 10 hearts
   playerStamina: 20, // 10 stamina units
   isFlying: false, // Creative flight mode
+
+  // Live Multiplayer Sync Layer
+  multiplayer: {
+    status: 'disconnected', // 'disconnected' | 'connecting' | 'connected' | 'error'
+    isHost: false,
+    roomCode: '',
+    peerId: null,
+    error: null,
+    remotePlayers: {}, // { [peerId]: { id, username, avatarConfig, position, targetPosition, yaw, targetYaw, isMoving, isFlying } }
+  },
+  showMultiplayerModal: false,
+  showSaveLoadModal: false,
 };
 
 const listeners = new Set();
@@ -117,22 +138,177 @@ export const worldStore = {
 
   // Onboarding & Avatar
   openOnboarding() {
-    state = { ...state, showOnboarding: true };
+    state = { ...state, showAvatarStudio: true };
     emitChange();
   },
 
   closeOnboarding() {
-    state = { ...state, showOnboarding: false };
+    state = { ...state, showAvatarStudio: false, showOnboarding: false };
+    emitChange();
+  },
+
+  openLoginModal() {
+    state = { ...state, showLoginModal: true };
+    emitChange();
+  },
+
+  closeLoginModal() {
+    state = { ...state, showLoginModal: false };
+    emitChange();
+  },
+
+  startWorldGeneration(config) {
+    const isCreative = isCreativeMode(config?.gameMode);
+    const modeObj =
+      PRIMARY_GAME_MODES[config?.gameMode] ||
+      GAME_MODES[config?.gameMode] ||
+      PRIMARY_GAME_MODES.creative;
+
+    const isSpectator =
+      config?.gameMode === 'spectator' || config?.gameMode === 'chronicler';
+
+    const cleanSeed = (config?.seed || state.seed || 'sunlit-archipelago').trim();
+    const freshExterior = generateSeededExteriorGrid(GRID_SIZE, cleanSeed);
+    const freshInterior = generateSeededInteriorGrid(INTERIOR_GRID_SIZE, cleanSeed + '-room');
+
+    state = {
+      ...state,
+      avatarConfig: { ...state.avatarConfig, ...config },
+      seed: cleanSeed,
+      exteriorGrid: freshExterior,
+      interiorGrid: freshInterior,
+      viewMode: VIEW_MODES.WALK_3D, // Direct 3D Minecraft Walk & Build
+      showLoginModal: false,
+      showLoadingScreen: true,
+      playerHealth: 20,
+      playerStamina: 20,
+      isFlying: isSpectator ? true : isCreative ? state.isFlying : false,
+      activityLogs: [
+        `✨ World Generated! Welcome ${config.username || 'Builder'} (${modeObj.name.toUpperCase()} - ${modeObj.subtitle.toUpperCase()}) to ${cleanSeed}`,
+        ...state.activityLogs.slice(0, 6),
+      ],
+    };
+    emitChange();
+  },
+
+  completeWorldLoading() {
+    state = {
+      ...state,
+      showLoadingScreen: false,
+      viewMode: VIEW_MODES.WALK_3D,
+    };
+    soundManager.playPlaceTile('meadow');
+    emitChange();
+  },
+
+  openAvatarStudio() {
+    state = { ...state, showAvatarStudio: true };
+    emitChange();
+  },
+
+  closeAvatarStudio() {
+    state = { ...state, showAvatarStudio: false };
+    emitChange();
+  },
+
+  toggleAvatarStudio() {
+    state = { ...state, showAvatarStudio: !state.showAvatarStudio };
+    emitChange();
+  },
+
+  saveAvatarConfig(newConfig) {
+    state = {
+      ...state,
+      avatarConfig: { ...state.avatarConfig, ...newConfig },
+      showAvatarStudio: false,
+      showOnboarding: false,
+    };
+    soundManager.playPlaceTile('terrace');
+    emitChange();
+  },
+
+  addHotbarItemCount(itemIdOrColor, count = 1) {
+    const slots = [...state.hotbarSlots];
+    let found = false;
+
+    // Check if slot with this id or color exists
+    for (let i = 0; i < slots.length; i++) {
+      if (
+        slots[i].id === itemIdOrColor ||
+        slots[i].color === itemIdOrColor ||
+        slots[i].propId === itemIdOrColor ||
+        (itemIdOrColor === 'brick_wood_log' && slots[i].id === 'brick_wood_log') ||
+        (itemIdOrColor === 'brick_wood_plank' && slots[i].id === 'brick_wood_plank')
+      ) {
+        slots[i] = { ...slots[i], count: slots[i].count + count };
+        found = true;
+        break;
+      }
+    }
+
+    // If not found in active hotbar, put into first 0-count slot or replace last slot
+    if (!found) {
+      let emptyIdx = slots.findIndex((s) => s.count === 0);
+      if (emptyIdx === -1) emptyIdx = slots.length - 1;
+
+      if (itemIdOrColor === 'brick_wood_log' || itemIdOrColor === '#6f4e37') {
+        slots[emptyIdx] = {
+          id: 'brick_wood_log',
+          name: 'Lego Wood Log',
+          type: 'brick',
+          color: '#795548',
+          icon: 'Box',
+          count: count,
+        };
+      } else if (itemIdOrColor === 'brick_wood_plank' || itemIdOrColor === '#d4a373') {
+        slots[emptyIdx] = {
+          id: 'brick_wood_plank',
+          name: 'Lego Wood Planks',
+          type: 'brick',
+          color: '#d4a373',
+          icon: 'Box',
+          count: count,
+        };
+      } else {
+        slots[emptyIdx] = {
+          ...slots[emptyIdx],
+          count: slots[emptyIdx].count + count,
+        };
+      }
+    }
+
+    state = {
+      ...state,
+      hotbarSlots: slots,
+      activityLogs: [
+        `🪵 Harvested resources! (+${count} added to hotbar)`,
+        ...state.activityLogs.slice(0, 5),
+      ],
+    };
+    soundManager.playPlaceTile('meadow');
     emitChange();
   },
 
   saveAndEnterWorld(newConfig) {
+    const isCreative = isCreativeMode(newConfig?.gameMode);
+    const modeObj =
+      PRIMARY_GAME_MODES[newConfig?.gameMode] ||
+      GAME_MODES[newConfig?.gameMode] ||
+      PRIMARY_GAME_MODES.creative;
+
+    const isSpectator =
+      newConfig?.gameMode === 'spectator' || newConfig?.gameMode === 'chronicler';
+
     state = {
       ...state,
       avatarConfig: newConfig,
       showOnboarding: false,
+      showAvatarStudio: false,
+      playerHealth: 20,
+      playerStamina: 20,
+      isFlying: isSpectator ? true : isCreative ? state.isFlying : false,
       activityLogs: [
-        `✨ Welcome ${newConfig.username} (${newConfig.gameMode.toUpperCase()} MODE) to Wildergrid!`,
+        `✨ Welcome ${newConfig.username} (${modeObj.name.toUpperCase()} MODE - ${modeObj.subtitle.toUpperCase()}) to Wildergrid!`,
         ...state.activityLogs.slice(0, 6),
       ],
     };
@@ -215,7 +391,7 @@ export const worldStore = {
   },
 
   // 3D Lego Voxel Actions
-  placeLegoBrick(x, y, z, color, propId = null) {
+  placeLegoBrick(x, y, z, color, propId = null, broadcast = true) {
     const key = `${x},${y},${z}`;
     const brickColor = color || state.legoSelectedColor || '#ff6b8b';
     const existingIndex = state.legoBricks.findIndex(b => b.x === x && b.y === y && b.z === z);
@@ -230,14 +406,22 @@ export const worldStore = {
     state = { ...state, legoBricks: newBricks };
     soundManager.playPop();
     emitChange();
+
+    if (broadcast) {
+      multiplayerManager.sendPlaceBlock(x, y, z, brickColor, propId);
+    }
   },
 
-  removeLegoBrick(x, y, z) {
+  removeLegoBrick(x, y, z, broadcast = true) {
     const newBricks = state.legoBricks.filter(b => !(b.x === x && b.y === y && b.z === z));
     if (newBricks.length !== state.legoBricks.length) {
       state = { ...state, legoBricks: newBricks };
       soundManager.playClick();
       emitChange();
+
+      if (broadcast) {
+        multiplayerManager.sendRemoveBlock(x, y, z);
+      }
     }
   },
 
@@ -248,6 +432,117 @@ export const worldStore = {
 
   clearLegoBricks() {
     state = { ...state, legoBricks: [] };
+    emitChange();
+  },
+
+  // Live Multiplayer Sync Actions
+  setMultiplayerStatus(status, details = {}) {
+    state = {
+      ...state,
+      multiplayer: {
+        ...state.multiplayer,
+        status,
+        ...details,
+      },
+    };
+    emitChange();
+  },
+
+  toggleMultiplayerModal(forcedOpen = null) {
+    const nextOpen = forcedOpen !== null ? forcedOpen : !state.showMultiplayerModal;
+    state = { ...state, showMultiplayerModal: nextOpen };
+    soundManager.playClick();
+    emitChange();
+  },
+
+  addRemotePlayer(peerId, player) {
+    const remotePlayers = { ...state.multiplayer.remotePlayers };
+    remotePlayers[peerId] = {
+      id: player.id || peerId,
+      username: player.username || 'Traveler',
+      avatarConfig: player.avatarConfig || DEFAULT_AVATAR_CONFIG,
+      position: player.position || { x: 4.5, y: 1.5, z: 4.5 },
+      targetPosition: player.position || { x: 4.5, y: 1.5, z: 4.5 },
+      yaw: player.yaw || 0,
+      targetYaw: player.yaw || 0,
+      isMoving: false,
+      isFlying: false,
+    };
+    state = {
+      ...state,
+      multiplayer: {
+        ...state.multiplayer,
+        remotePlayers,
+      },
+    };
+    emitChange();
+  },
+
+  removeRemotePlayer(peerId) {
+    const remotePlayers = { ...state.multiplayer.remotePlayers };
+    const p = remotePlayers[peerId];
+    delete remotePlayers[peerId];
+    state = {
+      ...state,
+      multiplayer: {
+        ...state.multiplayer,
+        remotePlayers,
+      },
+      activityLogs: p
+        ? [`👋 ${p.username} left the room.`, ...state.activityLogs.slice(0, 5)]
+        : state.activityLogs,
+    };
+    emitChange();
+  },
+
+  updateRemotePlayerPosition(peerId, moveData) {
+    const remotePlayers = state.multiplayer.remotePlayers;
+    const existing = remotePlayers[peerId];
+    if (!existing) return;
+
+    const updated = {
+      ...existing,
+      targetPosition: { x: moveData.x, y: moveData.y, z: moveData.z },
+      targetYaw: moveData.yaw !== undefined ? moveData.yaw : existing.targetYaw,
+      isMoving: !!moveData.isMoving,
+      isFlying: !!moveData.isFlying,
+    };
+
+    state = {
+      ...state,
+      multiplayer: {
+        ...state.multiplayer,
+        remotePlayers: {
+          ...remotePlayers,
+          [peerId]: updated,
+        },
+      },
+    };
+    emitChange();
+  },
+
+  clearRemotePlayers() {
+    state = {
+      ...state,
+      multiplayer: {
+        ...state.multiplayer,
+        remotePlayers: {},
+      },
+    };
+    emitChange();
+  },
+
+  syncFullLegoWorld(bricks) {
+    if (!Array.isArray(bricks)) return;
+    state = {
+      ...state,
+      legoBricks: [...bricks],
+      activityLogs: [
+        `📥 Synchronized ${bricks.length} Lego structures from host!`,
+        ...state.activityLogs.slice(0, 5),
+      ],
+    };
+    soundManager.playPlaceTile('crystal');
     emitChange();
   },
 
@@ -277,10 +572,59 @@ export const worldStore = {
     emitChange();
   },
 
+  setSelectedHotbarIndex(index) {
+    state = { ...state, selectedHotbarIndex: Math.max(0, Math.min(8, index)) };
+    soundManager.playClick();
+    emitChange();
+  },
+
+  cycleHotbar(direction) {
+    const currentIdx = state.selectedHotbarIndex;
+    const nextIdx = (currentIdx + direction + 9) % 9;
+    state = { ...state, selectedHotbarIndex: nextIdx };
+    soundManager.playClick();
+    emitChange();
+  },
+
   damagePlayer(amount) {
-    const nextHealth = Math.max(0, state.playerHealth - amount);
-    state = { ...state, playerHealth: nextHealth };
-    soundManager.playPlaceTile('peak');
+    const mode = state.avatarConfig?.gameMode || 'creative';
+    // Immunity in creative-type modes (Creative, Peaceful, Spectator, Architect)
+    if (isCreativeMode(mode)) {
+      return;
+    }
+
+    // Hardcore mode: 1.5x damage and permadeath
+    const isHardcore = mode === 'hardcore' || mode === 'iron_thread';
+    const effectiveDamage = isHardcore ? Math.ceil(amount * 1.5) : amount;
+    const nextHealth = Math.max(0, state.playerHealth - effectiveDamage);
+
+    if (nextHealth === 0) {
+      if (isHardcore) {
+        state = {
+          ...state,
+          playerHealth: 0,
+          activityLogs: [
+            '⚡ PERMADEATH: Your single iron thread has snapped! The story of your world has ended.',
+            ...state.activityLogs.slice(0, 5),
+          ],
+        };
+        soundManager.playPlaceTile('marsh');
+      } else {
+        state = {
+          ...state,
+          playerHealth: 20,
+          playerStamina: 20,
+          activityLogs: [
+            '💀 You succumbed to fall damage and woke up safe at camp!',
+            ...state.activityLogs.slice(0, 5),
+          ],
+        };
+        soundManager.playPlaceTile('marsh');
+      }
+    } else {
+      state = { ...state, playerHealth: nextHealth };
+      soundManager.playPlaceTile('peak');
+    }
     emitChange();
   },
 
@@ -291,6 +635,10 @@ export const worldStore = {
   },
 
   consumeStamina(amount) {
+    const mode = state.avatarConfig?.gameMode || 'creative';
+    if (isCreativeMode(mode) || mode === 'peaceful' || mode === 'zen') {
+      return; // Infinite stamina
+    }
     const nextStamina = Math.max(0, state.playerStamina - amount);
     state = { ...state, playerStamina: nextStamina };
     emitChange();
@@ -313,15 +661,21 @@ export const worldStore = {
     return true;
   },
 
-  addHotbarItemCount(itemId, count = 1) {
+  addHotbarItemCount(identifier, count = 1) {
     const newSlots = [...state.hotbarSlots];
-    const existing = newSlots.find(s => s.id === itemId);
+    const existing = newSlots.find(
+      (s) => s.id === identifier || s.color === identifier || s.propId === identifier
+    );
     if (existing) {
       existing.count += count;
     } else {
-      newSlots[state.selectedHotbarIndex].count += count;
+      const activeSlot = newSlots[state.selectedHotbarIndex];
+      if (activeSlot) {
+        activeSlot.count += count;
+      }
     }
     state = { ...state, hotbarSlots: newSlots };
+    soundManager.playPlaceTile('meadow');
     emitChange();
   },
 
@@ -334,6 +688,47 @@ export const worldStore = {
     const muted = !state.soundMuted;
     soundManager.setMuted(muted);
     state = { ...state, soundMuted: muted };
+    emitChange();
+  },
+
+  setSoundMuted(muted) {
+    soundManager.setMuted(muted);
+    state = { ...state, soundMuted: !!muted };
+    emitChange();
+  },
+
+  setSoundVolume(volume) {
+    const clamped = Math.max(0, Math.min(1, volume));
+    soundManager.setVolume(clamped);
+    state = { ...state, soundVolume: clamped };
+    emitChange();
+  },
+
+  setMouseSensitivity(sens) {
+    const clamped = Math.max(0.2, Math.min(3.0, sens));
+    state = { ...state, mouseSensitivity: clamped };
+    emitChange();
+  },
+
+  setCameraSmoothing(smoothing) {
+    state = { ...state, cameraSmoothing: !!smoothing };
+    emitChange();
+  },
+
+  setHeadBobbing(bobbing) {
+    state = { ...state, headBobbing: !!bobbing };
+    emitChange();
+  },
+
+  toggleSettingsModal(force) {
+    const nextVal = force !== undefined ? !!force : !state.showSettingsModal;
+    state = { ...state, showSettingsModal: nextVal };
+    soundManager.playClick();
+    emitChange();
+  },
+
+  closeSettingsModal() {
+    state = { ...state, showSettingsModal: false };
     emitChange();
   },
 
@@ -589,39 +984,120 @@ export const worldStore = {
     emitChange();
   },
 
-  exportWorldJSON() {
-    return JSON.stringify({
-      version: '3.0',
-      seed: state.seed,
+  setTheme(themeId) {
+    const nextTheme = themeId === 'midnight_dark' ? 'cyber_dark' : themeId === 'soft_retro' ? 'cozy_sunset' : themeId;
+    state = {
+      ...state,
+      avatarConfig: {
+        ...state.avatarConfig,
+        theme: nextTheme,
+      },
+      activityLogs: [
+        `🎨 Switched world theme to "${nextTheme.replace('_', ' ').toUpperCase()}"!`,
+        ...state.activityLogs.slice(0, 5),
+      ],
+    };
+    soundManager.playClick();
+    emitChange();
+  },
+
+  toggleSaveLoadModal(forcedOpen = null) {
+    const nextOpen = forcedOpen !== null ? forcedOpen : !state.showSaveLoadModal;
+    state = { ...state, showSaveLoadModal: nextOpen };
+    soundManager.playClick();
+    emitChange();
+  },
+
+  // World Persistence & Export (v4.0 Compact Production Schema)
+  exportWorldData(name = null) {
+    const worldName = name || `World-${state.seed}-${new Date().toLocaleDateString()}`;
+    return {
+      version: '4.0',
+      name: worldName,
       timestamp: new Date().toISOString(),
+      seed: state.seed,
+      theme: state.avatarConfig?.theme || 'pastel_dream',
+      gameMode: state.avatarConfig?.gameMode || 'creative',
+      player: {
+        health: state.playerHealth,
+        stamina: state.playerStamina,
+        isFlying: state.isFlying,
+      },
+      stats: {
+        totalBricks: state.legoBricks.length,
+        exteriorTiles: state.exteriorGrid.length * state.exteriorGrid[0].length,
+      },
+      legoBricks: state.legoBricks.map((b) => ({
+        x: b.x,
+        y: b.y,
+        z: b.z,
+        color: b.color,
+        propId: b.propId || null,
+      })),
       exteriorGrid: state.exteriorGrid,
       interiorGrid: state.interiorGrid,
       chronicledLore: state.chronicledLore,
-    }, null, 2);
+    };
+  },
+
+  exportWorldJSON(name = null) {
+    const data = this.exportWorldData(name);
+    return JSON.stringify(data, null, 2);
+  },
+
+  loadWorldData(data) {
+    if (!data) return false;
+    pushHistory();
+
+    const rawTheme = data.theme || state.avatarConfig?.theme || 'pastel_dream';
+    const newTheme = rawTheme === 'midnight_dark' ? 'cyber_dark' : rawTheme === 'soft_retro' ? 'cozy_sunset' : rawTheme;
+
+    const newBricks = Array.isArray(data.legoBricks)
+      ? data.legoBricks.map((b) => ({
+          id: `${b.x},${b.y},${b.z}`,
+          x: b.x,
+          y: b.y,
+          z: b.z,
+          color: b.color || '#ff6b8b',
+          propId: b.propId || null,
+        }))
+      : state.legoBricks;
+
+    state = {
+      ...state,
+      seed: data.seed || state.seed,
+      legoBricks: newBricks,
+      avatarConfig: {
+        ...state.avatarConfig,
+        theme: newTheme,
+        gameMode: data.gameMode || data.player?.gameMode || state.avatarConfig?.gameMode || 'creative',
+      },
+      playerHealth: data.player?.health ?? 20,
+      playerStamina: data.player?.stamina ?? 20,
+      isFlying: !!data.player?.isFlying,
+      ...(data.exteriorGrid ? { exteriorGrid: data.exteriorGrid } : {}),
+      ...(data.interiorGrid ? { interiorGrid: data.interiorGrid } : {}),
+      ...(data.chronicledLore ? { chronicledLore: data.chronicledLore } : {}),
+      inspectedTile: null,
+      activityLogs: [
+        `💾 World "${data.name || data.seed || 'Loaded World'}" successfully loaded!`,
+        ...state.activityLogs.slice(0, 5),
+      ],
+    };
+    soundManager.playPlaceTile('crystal');
+    emitChange();
+    return true;
   },
 
   importWorldJSON(jsonString) {
     try {
       const data = JSON.parse(jsonString);
-      if (data.exteriorGrid || data.interiorGrid) {
-        pushHistory();
-        state = {
-          ...state,
-          seed: data.seed || 'imported-haven',
-          ...(data.exteriorGrid ? { exteriorGrid: data.exteriorGrid } : {}),
-          ...(data.interiorGrid ? { interiorGrid: data.interiorGrid } : {}),
-          ...(data.chronicledLore ? { chronicledLore: data.chronicledLore } : {}),
-          inspectedTile: null,
-        };
-        soundManager.playPlaceTile('meadow');
-        emitChange();
-        return true;
-      }
+      return this.loadWorldData(data);
     } catch (e) {
       console.error('Invalid JSON world data', e);
+      return false;
     }
-    return false;
-  }
+  },
 };
 
 export function useWorldStore() {

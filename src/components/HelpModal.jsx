@@ -15,7 +15,7 @@ export default function HelpModal({ isOpen, onClose }) {
         </button>
 
         <div className="flex items-center space-x-3 mb-4">
-          <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-tropical-coral via-tropical-yellow to-tropical-aqua flex items-center justify-center shadow-coral-glow">
+          <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg shadow-emerald-500/25">
             <Sparkles className="w-6 h-6 text-white" />
           </div>
           <div>
@@ -72,7 +72,7 @@ export default function HelpModal({ isOpen, onClose }) {
 
         <button
           onClick={onClose}
-          className="w-full py-2.5 rounded-2xl font-bold text-xs bg-gradient-to-r from-tropical-coral to-tropical-yellow hover:opacity-95 text-white shadow-coral-glow transition"
+          className="w-full py-2.5 rounded-2xl font-bold text-xs bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white shadow-lg shadow-emerald-500/25 transition"
         >
           Let's Build!
         </button>

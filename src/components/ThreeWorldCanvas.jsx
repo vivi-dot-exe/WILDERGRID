@@ -4,12 +4,23 @@ import { useWorldStore, worldStore } from '../store/useWorldStore';
 import { DOMAINS, VIEW_MODES } from '../types/world';
 import { LegoVoxelEngine, createGhostBrick, createCrackingOverlay } from '../utils/legoMesh';
 import { PlayerController, createAvatarMesh } from '../utils/playerController';
+import { multiplayerManager } from '../utils/multiplayer';
+import { getThemeById, isCreativeMode } from '../types/avatar';
+import { VoxelCowManager, createHarvestableTree } from '../utils/voxelEntities';
 import HotbarHUD from './HotbarHUD';
 import InventoryModal from './InventoryModal';
 import {
   Sparkles,
   MousePointer,
   Eye,
+  ZoomIn,
+  ZoomOut,
+  Compass,
+  Volume2,
+  VolumeX,
+  Settings,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 
 export default function ThreeWorldCanvas() {
@@ -24,15 +35,19 @@ export default function ThreeWorldCanvas() {
     hotbarSlots,
     selectedHotbarIndex,
     isInventoryOpen,
+    soundMuted,
+    mouseSensitivity,
+    cameraSmoothing,
+    headBobbing,
   } = useWorldStore();
 
   const [isLocked, setIsLocked] = useState(false);
+  const [isControlsExpanded, setIsControlsExpanded] = useState(false);
   const [hasDismissedOverlay, setHasDismissedOverlay] = useState(false);
   const [cameraZoomLevel, setCameraZoomLevel] = useState('Exterior (3rd Person)');
+  const [miningProgress, setMiningProgress] = useState(0);
 
-  const isCreative =
-    avatarConfig?.gameMode === 'dreamweaver' ||
-    avatarConfig?.gameMode === 'creative';
+  const isCreative = isCreativeMode(avatarConfig?.gameMode);
 
   // Mining reference for holding right-click in Survival
   const miningRef = useRef({
@@ -80,7 +95,7 @@ export default function ThreeWorldCanvas() {
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.05;
     container.appendChild(renderer.domElement);
@@ -130,6 +145,10 @@ export default function ThreeWorldCanvas() {
       initialPitch: -0.2,
       initialDistance: 5.5,
       isCreative,
+      gameMode: avatarConfig?.gameMode,
+      sensitivityMultiplier: mouseSensitivity,
+      smoothing: cameraSmoothing,
+      headBobbingEnabled: headBobbing,
       onFallDamage: (damage) => {
         worldStore.damagePlayer(damage);
       },
@@ -139,11 +158,34 @@ export default function ThreeWorldCanvas() {
       onConsumeStamina: (amount) => {
         worldStore.consumeStamina(amount);
       },
+      onCycleHotbar: (direction) => {
+        worldStore.cycleHotbar(direction);
+      },
+      onZoomChange: (dist) => {
+        if (dist <= 1.35) {
+          setCameraZoomLevel('1st Person View');
+        } else if (dist <= 5.8) {
+          setCameraZoomLevel('3rd Person (Close)');
+        } else {
+          setCameraZoomLevel('Panoramic Overview');
+        }
+      },
     });
 
     const avatarMesh = createAvatarMesh(avatarConfig);
     scene.add(avatarMesh);
     playerController.setAvatarMesh(avatarMesh);
+
+    // 10. Remote Multiplayer Players Group
+    const remotePlayersGroup = new THREE.Group();
+    scene.add(remotePlayersGroup);
+    const remoteMeshes = new Map(); // peerId -> { mesh, nameplate, leftArm, rightArm, leftLeg, rightLeg, walkCycle, targetPos, targetYaw, isMoving }
+
+    // 11. 3D Voxel Cows Manager
+    const cowManager = new VoxelCowManager(scene, 16);
+    if (activeDomain === DOMAINS.EXTERIOR) {
+      cowManager.spawnCows(5);
+    }
 
     // Save into ref
     engineRef.current = {
@@ -152,10 +194,13 @@ export default function ThreeWorldCanvas() {
       renderer,
       playerController,
       legoEngine,
+      cowManager,
       ghostBrick,
       crackingOverlay,
       streetGroup,
       avatarMesh,
+      remotePlayersGroup,
+      remoteMeshes,
       sunLight,
       ambientLight,
       raycaster: new THREE.Raycaster(),
@@ -166,9 +211,10 @@ export default function ThreeWorldCanvas() {
     // Apply environment theme
     applyThemeEnvironment(engineRef.current, avatarConfig?.theme || 'pastel_dream');
 
-    // Build streets from grid
+    // Build streets from grid and get static colliders
     const currentGrid = activeDomain === DOMAINS.EXTERIOR ? exteriorGrid : interiorGrid;
-    rebuildStreetWorld(streetGroup, currentGrid, activeDomain);
+    const initialColliders = rebuildStreetWorld(streetGroup, currentGrid, activeDomain, avatarConfig?.theme);
+    engineRef.current.streetColliders = initialColliders;
 
     // Resize Listener
     const handleResize = () => {
@@ -204,33 +250,66 @@ export default function ThreeWorldCanvas() {
     };
     window.addEventListener('keydown', handleKeyDown);
 
-    // Raycast Interaction (Left-click Place, Right-click Mine)
-    const handlePointerDown = (e) => {
-      if (document.pointerLockElement !== renderer.domElement) {
-        playerController.lock();
-        return;
-      }
-
-      const raycaster = engineRef.current.raycaster;
-      raycaster.setFromCamera(engineRef.current.screenCenter, camera);
-
-      // Collect interactable targets
+    // Reusable raycast interaction logic for both locked FPS & pad drag mode
+    const executeRaycastInteraction = (raycaster, button) => {
+      // Collect interactable targets across chunks, voxel cows, trees, and street layout
       const targets = [];
-      if (legoEngine.instancedMesh) targets.push(legoEngine.instancedMesh);
-      if (legoEngine.propsGroup) {
-        legoEngine.propsGroup.children.forEach((c) => targets.push(c));
+      targets.push(...legoEngine.getInteractableObjects());
+      if (engineRef.current.cowManager) {
+        targets.push(...engineRef.current.cowManager.getInteractableObjects());
       }
       streetGroup.traverse((child) => {
-        if (child.isMesh && child.userData.isInteractable) {
+        if (child.isMesh && child.userData?.isInteractable) {
           targets.push(child);
         }
       });
 
       const intersects = raycaster.intersectObjects(targets, false);
-      if (intersects.length === 0) return;
+      if (intersects.length === 0) return false;
 
       const hit = intersects[0];
+
+      // 1. Check for clicking / petting 3D Voxel Cows
+      if (hit.object.userData?.isCow) {
+        engineRef.current.cowManager?.interactWithCow(hit.object.userData.cowId);
+        return true;
+      }
+
+      // 2. Check for harvesting 3D Lego Tree Wood
+      if (hit.object.userData?.isWoodTrunk || hit.object.userData?.isLeaf) {
+        const isCreativeActive = isCreativeMode(worldStore.getState().avatarConfig?.gameMode);
+        const dropType = hit.object.userData?.woodDrop || 'brick_wood_log';
+
+        if (button === 0 && isCreativeActive) {
+          worldStore.addHotbarItemCount(dropType, 1);
+          hit.object.visible = false;
+          hit.object.position.y = -999;
+          return true;
+        } else if (button === 2) {
+          if (isCreativeActive) {
+            worldStore.addHotbarItemCount(dropType, 1);
+            hit.object.visible = false;
+            hit.object.position.y = -999;
+            return true;
+          } else {
+            miningRef.current = {
+              active: true,
+              x: hit.point.x,
+              y: hit.point.y,
+              z: hit.point.z,
+              startTime: performance.now(),
+              isWoodTrunk: true,
+              woodMesh: hit.object,
+              woodDrop: dropType,
+            };
+            return true;
+          }
+        }
+      }
+
       const isLegoHit =
+        hit.object.userData?.isLegoChunk ||
+        hit.object.userData?.brickKey ||
         hit.object === legoEngine.instancedMesh ||
         hit.object.parent === legoEngine.propsGroup;
 
@@ -238,15 +317,12 @@ export default function ThreeWorldCanvas() {
       const currentSlot =
         currentStoreState.hotbarSlots[currentStoreState.selectedHotbarIndex] ||
         currentStoreState.hotbarSlots[0];
-      const isCreativeMode =
-        currentStoreState.avatarConfig?.gameMode === 'dreamweaver' ||
-        currentStoreState.avatarConfig?.gameMode === 'creative';
+      const isCreativeModeActive = isCreativeMode(currentStoreState.avatarConfig?.gameMode);
 
-      if (e.button === 0) {
+      if (button === 0) {
         // LEFT CLICK: Place Active Hotbar Item
-        // In Survival, check if slot has count
-        if (!isCreativeMode && currentSlot.count <= 0) {
-          return;
+        if (!isCreativeModeActive && currentSlot.count <= 0) {
+          return false;
         }
 
         let targetX, targetY, targetZ;
@@ -279,11 +355,12 @@ export default function ThreeWorldCanvas() {
             currentSlot.propId
           );
 
-          if (!isCreativeMode) {
+          if (!isCreativeModeActive) {
             worldStore.consumeCurrentHotbarItem();
           }
+          return true;
         }
-      } else if (e.button === 2) {
+      } else if (button === 2) {
         // RIGHT CLICK: Remove / Mine Lego Block
         if (isLegoHit) {
           let targetX, targetY, targetZ;
@@ -300,11 +377,9 @@ export default function ThreeWorldCanvas() {
             targetZ = Math.floor(hitPos.z);
           }
 
-          if (isCreativeMode) {
-            // Creative: Instant break!
+          if (isCreativeModeActive) {
             worldStore.removeLegoBrick(targetX, targetY, targetZ);
           } else {
-            // Survival: Start 1.0-second break timer with cracking animation!
             miningRef.current = {
               active: true,
               x: targetX,
@@ -313,7 +388,18 @@ export default function ThreeWorldCanvas() {
               startTime: performance.now(),
             };
           }
+          return true;
         }
+      }
+      return false;
+    };
+
+    const handlePointerDown = (e) => {
+      if (e.target !== renderer.domElement) return;
+      if (document.pointerLockElement === renderer.domElement) {
+        const raycaster = engineRef.current.raycaster;
+        raycaster.setFromCamera(engineRef.current.screenCenter, camera);
+        executeRaycastInteraction(raycaster, e.button);
       }
     };
 
@@ -322,6 +408,22 @@ export default function ThreeWorldCanvas() {
         // Cancel mining if released early
         miningRef.current.active = false;
         crackingOverlay.visible = false;
+        setMiningProgress(0);
+      }
+
+      // If NOT pointer locked (Pad Drag mode / Unlocked mouse):
+      if (document.pointerLockElement !== renderer.domElement) {
+        // Only trigger interaction if clicking directly on the 3D canvas and not dragged
+        if (e.target === renderer.domElement && !playerController.hasDragged) {
+          const rect = renderer.domElement.getBoundingClientRect();
+          const mouse = new THREE.Vector2(
+            ((e.clientX - rect.left) / rect.width) * 2 - 1,
+            -((e.clientY - rect.top) / rect.height) * 2 + 1
+          );
+          const raycaster = engineRef.current.raycaster;
+          raycaster.setFromCamera(mouse, camera);
+          executeRaycastInteraction(raycaster, e.button);
+        }
       }
     };
 
@@ -339,23 +441,151 @@ export default function ThreeWorldCanvas() {
       const delta = (time - lastTime) / 1000;
       lastTime = time;
 
-      // Update colliders from Lego blocks and street boundaries
+      // Block colliders from Lego engine + precomputed street architecture colliders
       const blockColliders = legoEngine.getAllBrickAABBs();
-      playerController.update(delta, blockColliders);
+      const streetColliders = engineRef.current.streetColliders || [];
+
+      const currentConfig = worldStore.getState().avatarConfig;
+      const isSpectator =
+        currentConfig?.gameMode === 'spectator' ||
+        currentConfig?.gameMode === 'chronicler';
+
+      // Spectators have no-clip flight (bypass colliders)
+      playerController.update(
+        delta,
+        isSpectator ? [] : [...blockColliders, ...streetColliders]
+      );
+
+      // Update 3D Voxel Cows wandering & limb animations
+      if (engineRef.current.cowManager) {
+        engineRef.current.cowManager.update(delta, playerController.position);
+      }
+
+      // Multiplayer Live Player Movement Sync Broadcast (~25Hz)
+      multiplayerManager.sendPlayerMove(
+        playerController.position,
+        playerController.yaw,
+        playerController.isMoving,
+        playerController.isFlying
+      );
+
+      // Reconcile and Interpolate Remote Players
+      const remotePlayers = worldStore.getState().multiplayer.remotePlayers || {};
+      const activePeerIds = Object.keys(remotePlayers);
+
+      activePeerIds.forEach((peerId) => {
+        const remoteData = remotePlayers[peerId];
+        let entry = remoteMeshes.get(peerId);
+
+        if (!entry) {
+          const mesh = createAvatarMesh(remoteData.avatarConfig);
+          const nameplate = createNameplateSprite(remoteData.username);
+          mesh.add(nameplate);
+
+          const startPos = remoteData.targetPosition || remoteData.position || { x: 4.5, y: 1.5, z: 4.5 };
+          mesh.position.set(startPos.x, startPos.y, startPos.z);
+          mesh.rotation.y = remoteData.targetYaw || remoteData.yaw || 0;
+
+          remotePlayersGroup.add(mesh);
+
+          entry = {
+            mesh,
+            nameplate,
+            leftArm: mesh.getObjectByName('leftArm'),
+            rightArm: mesh.getObjectByName('rightArm'),
+            leftLeg: mesh.getObjectByName('leftLeg'),
+            rightLeg: mesh.getObjectByName('rightLeg'),
+            walkCycle: 0,
+            targetPos: new THREE.Vector3(startPos.x, startPos.y, startPos.z),
+            targetYaw: remoteData.targetYaw || 0,
+            isMoving: false,
+          };
+          remoteMeshes.set(peerId, entry);
+        }
+
+        // Update target position and yaw
+        if (remoteData.targetPosition) {
+          entry.targetPos.set(
+            remoteData.targetPosition.x,
+            remoteData.targetPosition.y,
+            remoteData.targetPosition.z
+          );
+        }
+        if (remoteData.targetYaw !== undefined) {
+          entry.targetYaw = remoteData.targetYaw;
+        }
+        entry.isMoving = !!remoteData.isMoving;
+
+        // Smooth position interpolation (lerp)
+        entry.mesh.position.lerp(entry.targetPos, Math.min(1.0, delta * 14));
+
+        // Shortest angle yaw interpolation
+        let diff = entry.targetYaw - entry.mesh.rotation.y;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        entry.mesh.rotation.y += diff * Math.min(1.0, delta * 12);
+
+        // Limb animation
+        if (entry.isMoving) {
+          entry.walkCycle += delta * 10;
+          const swing = Math.sin(entry.walkCycle) * 0.65;
+          if (entry.leftArm) entry.leftArm.rotation.x = swing;
+          if (entry.rightArm) entry.rightArm.rotation.x = -swing;
+          if (entry.leftLeg) entry.leftLeg.rotation.x = -swing;
+          if (entry.rightLeg) entry.rightLeg.rotation.x = swing;
+        } else {
+          if (entry.leftArm) entry.leftArm.rotation.x = THREE.MathUtils.lerp(entry.leftArm.rotation.x, 0, delta * 10);
+          if (entry.rightArm) entry.rightArm.rotation.x = THREE.MathUtils.lerp(entry.rightArm.rotation.x, 0, delta * 10);
+          if (entry.leftLeg) entry.leftLeg.rotation.x = THREE.MathUtils.lerp(entry.leftLeg.rotation.x, 0, delta * 10);
+          if (entry.rightLeg) entry.rightLeg.rotation.x = THREE.MathUtils.lerp(entry.rightLeg.rotation.x, 0, delta * 10);
+        }
+      });
+
+      // Cleanup disconnected peers
+      remoteMeshes.forEach((entry, peerId) => {
+        if (!remotePlayers[peerId]) {
+          remotePlayersGroup.remove(entry.mesh);
+          if (entry.nameplate?.material?.map) {
+            entry.nameplate.material.map.dispose();
+          }
+          remoteMeshes.delete(peerId);
+        }
+      });
 
       // Survival Mining 1-Second Timer & Cracking Overlay Animation
       if (miningRef.current.active) {
         const elapsed = (time - miningRef.current.startTime) / 1000;
+        const progress = Math.min(1.0, elapsed);
+        setMiningProgress(progress);
+
         if (elapsed >= 1.0) {
-          // Block broken!
-          worldStore.removeLegoBrick(
-            miningRef.current.x,
-            miningRef.current.y,
-            miningRef.current.z
-          );
-          worldStore.addHotbarItemCount('brick_rose', 1);
+          // Block or harvestable tree trunk broken!
+          if (miningRef.current.isWoodTrunk) {
+            if (miningRef.current.woodMesh) {
+              miningRef.current.woodMesh.visible = false;
+              miningRef.current.woodMesh.position.y = -999;
+            }
+            worldStore.addHotbarItemCount(miningRef.current.woodDrop || 'brick_wood_log', 1);
+          } else {
+            const brickData = legoEngine.getBrickAt(
+              miningRef.current.x,
+              miningRef.current.y,
+              miningRef.current.z
+            );
+            worldStore.removeLegoBrick(
+              miningRef.current.x,
+              miningRef.current.y,
+              miningRef.current.z
+            );
+            // Return the broken brick or prop back to the player's hotbar
+            worldStore.addHotbarItemCount(
+              brickData?.propId || brickData?.color || 'brick_rose',
+              1
+            );
+          }
           miningRef.current.active = false;
           crackingOverlay.visible = false;
+          setMiningProgress(0);
         } else {
           // Animate cracks and opacity
           crackingOverlay.position.set(
@@ -364,19 +594,25 @@ export default function ThreeWorldCanvas() {
             miningRef.current.z + 0.5
           );
           crackingOverlay.visible = true;
-          crackingOverlay.material.opacity = Math.min(0.95, 0.25 + elapsed * 0.7);
+          if (crackingOverlay.setProgress) {
+            crackingOverlay.setProgress(progress);
+          } else if (crackingOverlay.material) {
+            crackingOverlay.material.opacity = Math.min(0.95, 0.25 + elapsed * 0.7);
+          }
         }
       } else {
-        crackingOverlay.visible = false;
+        if (crackingOverlay.visible) {
+          crackingOverlay.visible = false;
+        }
       }
 
       // Update Zoom HUD status
-      if (playerController.currentDistance < 2.0) {
-        setCameraZoomLevel('Interior (1st Person)');
-      } else if (playerController.currentDistance < 7.0) {
-        setCameraZoomLevel('Street View (3rd Person)');
+      if (playerController.currentDistance <= 1.35) {
+        setCameraZoomLevel('1st Person View');
+      } else if (playerController.currentDistance <= 5.8) {
+        setCameraZoomLevel('3rd Person (Close)');
       } else {
-        setCameraZoomLevel('Panoramic City View');
+        setCameraZoomLevel('Panoramic Overview');
       }
 
       // Update Ghost Placement Reticle
@@ -385,10 +621,7 @@ export default function ThreeWorldCanvas() {
         raycaster.setFromCamera(engineRef.current.screenCenter, camera);
 
         const targets = [];
-        if (legoEngine.instancedMesh) targets.push(legoEngine.instancedMesh);
-        if (legoEngine.propsGroup) {
-          legoEngine.propsGroup.children.forEach((c) => targets.push(c));
-        }
+        targets.push(...legoEngine.getInteractableObjects());
         streetGroup.traverse((child) => {
           if (child.isMesh && child.userData.isInteractable) {
             targets.push(child);
@@ -420,6 +653,9 @@ export default function ThreeWorldCanvas() {
         ghostBrick.visible = false;
       }
 
+      // Active Chunk Frustum Culling for 60 FPS Laptop QA
+      legoEngine.updateFrustum(camera);
+
       renderer.render(scene, camera);
     };
 
@@ -439,18 +675,26 @@ export default function ThreeWorldCanvas() {
       legoEngine.dispose();
       renderer.dispose();
 
+      remoteMeshes.forEach((entry) => {
+        remotePlayersGroup.remove(entry.mesh);
+        if (entry.nameplate?.material?.map) {
+          entry.nameplate.material.map.dispose();
+        }
+      });
+      remoteMeshes.clear();
+
       if (container && renderer.domElement) {
         container.removeChild(renderer.domElement);
       }
     };
   }, []);
 
-  // Sync Creative mode flag
+  // Sync Creative mode flag & gameMode
   useEffect(() => {
     if (engineRef.current.playerController) {
-      engineRef.current.playerController.setCreativeMode(isCreative);
+      engineRef.current.playerController.setCreativeMode(isCreative, avatarConfig?.gameMode);
     }
-  }, [isCreative]);
+  }, [isCreative, avatarConfig?.gameMode]);
 
   // Sync Lego Bricks
   useEffect(() => {
@@ -477,13 +721,36 @@ export default function ThreeWorldCanvas() {
     }
   }, [avatarConfig?.theme]);
 
-  // Sync Grid Street Layout
+  // Sync Grid Street Layout & Theme Environment Ground
   useEffect(() => {
     if (engineRef.current.streetGroup) {
       const currentGrid = activeDomain === DOMAINS.EXTERIOR ? exteriorGrid : interiorGrid;
-      rebuildStreetWorld(engineRef.current.streetGroup, currentGrid, activeDomain);
+      const newColliders = rebuildStreetWorld(
+        engineRef.current.streetGroup,
+        currentGrid,
+        activeDomain,
+        avatarConfig?.theme
+      );
+      engineRef.current.streetColliders = newColliders;
+
+      if (engineRef.current.cowManager) {
+        if (activeDomain === DOMAINS.EXTERIOR) {
+          engineRef.current.cowManager.spawnCows(5);
+        } else {
+          engineRef.current.cowManager.clear();
+        }
+      }
     }
-  }, [activeDomain, exteriorGrid, interiorGrid]);
+  }, [activeDomain, exteriorGrid, interiorGrid, avatarConfig?.theme]);
+
+  // Sync cursor sensitivity and camera damping settings directly to PlayerController
+  useEffect(() => {
+    if (engineRef.current?.playerController) {
+      engineRef.current.playerController.setSensitivityMultiplier(mouseSensitivity ?? 1.0);
+      engineRef.current.playerController.setSmoothing(cameraSmoothing ?? true);
+      engineRef.current.playerController.setHeadBobbing(headBobbing ?? true);
+    }
+  }, [mouseSensitivity, cameraSmoothing, headBobbing]);
 
   const activeSlot = hotbarSlots[selectedHotbarIndex] || hotbarSlots[0];
 
@@ -500,83 +767,179 @@ export default function ThreeWorldCanvas() {
       {isLocked && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="relative flex items-center justify-center">
+            {/* Mining Progress Radial Timer (Survival Mode) */}
+            {miningProgress > 0 && (
+              <div className="absolute flex flex-col items-center justify-center pointer-events-none">
+                <svg className="w-14 h-14 -rotate-90">
+                  <circle
+                    cx="28"
+                    cy="28"
+                    r="21"
+                    stroke="rgba(0,0,0,0.4)"
+                    strokeWidth="3.5"
+                    fill="transparent"
+                  />
+                  <circle
+                    cx="28"
+                    cy="28"
+                    r="21"
+                    stroke="#f97316"
+                    strokeWidth="3.5"
+                    fill="transparent"
+                    strokeDasharray={2 * Math.PI * 21}
+                    strokeDashoffset={2 * Math.PI * 21 * (1 - miningProgress)}
+                    strokeLinecap="round"
+                  />
+                </svg>
+                <span className="absolute text-[8.5px] font-black text-white bg-black/80 px-1.5 py-0.2 rounded-full mt-14 shadow">
+                  {Math.round(miningProgress * 100)}%
+                </span>
+              </div>
+            )}
+
             {/* Soft Crosshair Dot with active block color */}
             <div
-              className="w-3.5 h-3.5 rounded-full border-2 border-white shadow-lg transition-transform duration-75 scale-100"
+              className={`w-3.5 h-3.5 rounded-full border-2 border-white shadow-lg transition-transform duration-75 ${
+                miningProgress > 0 ? 'scale-125 ring-2 ring-orange-500' : 'scale-100'
+              }`}
               style={{ backgroundColor: activeSlot?.color || '#ff6b8b' }}
             />
-            <div className="absolute w-8 h-8 rounded-full border border-white/50 animate-ping opacity-25" />
+            {miningProgress === 0 && (
+              <div className="absolute w-8 h-8 rounded-full border border-white/50 animate-ping opacity-25" />
+            )}
           </div>
         </div>
       )}
 
-      {/* Top Left: Controls & Keybinding Helper */}
-      <div className="absolute top-20 left-4 z-20 pointer-events-auto max-w-xs">
-        <div className="tropical-glass p-3.5 rounded-2xl space-y-2 border border-white/80 shadow-tropical-md text-xs text-slate-700">
-          <div className="font-bold flex items-center justify-between text-slate-800">
-            <span className="flex items-center space-x-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-tropical-coral" />
-              <span>3D Walk & Build</span>
-            </span>
-            <span
-              onClick={() => engineRef.current.playerController?.lock()}
-              className={`text-[10px] px-2 py-0.5 rounded-full font-bold cursor-pointer transition ${
-                isLocked
-                  ? 'bg-emerald-500/15 text-emerald-700 border border-emerald-400/40'
-                  : 'bg-tropical-coral/15 text-tropical-coral border border-tropical-coral/30 hover:bg-tropical-coral hover:text-white'
-              }`}
+      {/* Top Left: Controls & Keybinding Helper (Collapsible for Spacious View) */}
+      <div className="absolute top-28 left-4 z-20 pointer-events-auto max-w-xs select-none">
+        {!isControlsExpanded ? (
+          <div className="flex items-center space-x-1.5">
+            <button
+              onClick={() => setIsControlsExpanded(true)}
+              className="tropical-glass px-3 py-1.5 rounded-2xl border border-white/80 shadow-tropical-md flex items-center space-x-2 text-slate-700 hover:text-slate-900 hover:bg-white/90 transition backdrop-blur-md"
+              title="Open Controls & Shortcuts Guide"
             >
-              {isLocked ? 'Mouse Locked' : 'Click to Lock'}
-            </span>
+              <Sparkles className="w-3.5 h-3.5 text-tropical-coral" />
+              <span className="text-xs font-bold font-fredoka">Controls & Guide</span>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+            </button>
+            <button
+              onClick={() => {
+                if (isLocked) {
+                  engineRef.current.playerController?.unlock();
+                } else {
+                  engineRef.current.playerController?.lock();
+                }
+              }}
+              className={`text-[10px] px-2.5 py-1.5 rounded-2xl font-bold transition shadow-tropical-sm border backdrop-blur-md ${
+                isLocked
+                  ? 'bg-emerald-500/15 text-emerald-700 border-emerald-400/50 hover:bg-emerald-500/25'
+                  : 'bg-tropical-coral/15 text-tropical-coral border-tropical-coral/40 hover:bg-tropical-coral hover:text-white'
+              }`}
+              title="Toggle Aim Lock / Pad Drag"
+            >
+              {isLocked ? 'Aim Locked' : 'Pad Drag'}
+            </button>
           </div>
+        ) : (
+          <div className="tropical-glass p-3.5 rounded-2xl space-y-2 border border-white/80 shadow-tropical-md text-xs text-slate-700 animate-fade-in backdrop-blur-md">
+            <div className="font-bold flex items-center justify-between text-slate-800">
+              <span className="flex items-center space-x-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-tropical-coral" />
+                <span>3D Walk & Build</span>
+              </span>
+              <div className="flex items-center space-x-1.5">
+                <button
+                  onClick={() => {
+                    if (isLocked) {
+                      engineRef.current.playerController?.unlock();
+                    } else {
+                      engineRef.current.playerController?.lock();
+                    }
+                  }}
+                  className={`text-[10px] px-2 py-0.5 rounded-full font-bold cursor-pointer transition ${
+                    isLocked
+                      ? 'bg-emerald-500/15 text-emerald-700 border border-emerald-400/40'
+                      : 'bg-tropical-coral/15 text-tropical-coral border border-tropical-coral/30 hover:bg-tropical-coral hover:text-white'
+                  }`}
+                >
+                  {isLocked ? 'Aim Locked' : 'Click to Lock'}
+                </button>
+                <button
+                  onClick={() => setIsControlsExpanded(false)}
+                  className="w-5 h-5 rounded-lg hover:bg-slate-200/60 flex items-center justify-center text-slate-500 hover:text-slate-800 transition"
+                  title="Collapse Guide"
+                >
+                  <ChevronUp className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
 
-          <div className="text-[11px] font-semibold text-tropical-coral flex items-center space-x-1 bg-white/70 px-2 py-1 rounded-xl">
-            <Eye className="w-3.5 h-3.5 text-tropical-aqua" />
-            <span>{cameraZoomLevel}</span>
+            <div className="text-[11px] font-semibold text-tropical-coral flex items-center space-x-1 bg-white/70 px-2 py-1 rounded-xl">
+              <Eye className="w-3.5 h-3.5 text-tropical-aqua" />
+              <span>{cameraZoomLevel}</span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-1.5 text-[11px] pt-1">
+              <div className="flex items-center space-x-1.5 bg-white/60 px-2 py-1 rounded-lg">
+                <kbd className="font-mono font-bold text-[10px] bg-slate-100 px-1.5 py-0.5 rounded border border-slate-300">
+                  WASD
+                </kbd>
+                <span>Walk & Bob</span>
+              </div>
+
+              <div className="flex items-center space-x-1.5 bg-white/60 px-2 py-1 rounded-lg">
+                <kbd className="font-mono font-bold text-[10px] bg-slate-100 px-1.5 py-0.5 rounded border border-slate-300">
+                  Shift
+                </kbd>
+                <span>Sprint FOV</span>
+              </div>
+
+              <div className="flex items-center space-x-1.5 bg-white/60 px-2 py-1 rounded-lg">
+                <kbd className="font-mono font-bold text-[10px] bg-slate-100 px-1.5 py-0.5 rounded border border-slate-300">
+                  Space
+                </kbd>
+                <span>Jump</span>
+              </div>
+
+              <div className="flex items-center space-x-1.5 bg-white/60 px-2 py-1 rounded-lg">
+                <kbd className="font-mono font-bold text-[10px] bg-slate-100 px-1.5 py-0.5 rounded border border-slate-300">
+                  V / F5
+                </kbd>
+                <span>1st / 3rd</span>
+              </div>
+
+              <div className="flex items-center space-x-1.5 bg-white/60 px-2 py-1 rounded-lg">
+                <kbd className="font-mono font-bold text-[10px] bg-slate-100 px-1.5 py-0.5 rounded border border-slate-300">
+                  Pad Pinch
+                </kbd>
+                <span>Zoom In/Out</span>
+              </div>
+
+              <div className="flex items-center space-x-1.5 bg-white/60 px-2 py-1 rounded-lg">
+                <kbd className="font-mono font-bold text-[10px] bg-slate-100 px-1.5 py-0.5 rounded border border-slate-300">
+                  Wheel
+                </kbd>
+                <span>Zoom In/Out</span>
+              </div>
+
+              <div className="flex items-center space-x-1.5 bg-white/60 px-2 py-1 rounded-lg">
+                <span className="font-bold text-emerald-600">Left-Click</span>
+                <span>Place Block</span>
+              </div>
+
+              <div className="flex items-center space-x-1.5 bg-white/60 px-2 py-1 rounded-lg">
+                <span className="font-bold text-rose-500">Right-Click</span>
+                <span>{isCreative ? 'Break' : 'Hold Mine'}</span>
+              </div>
+            </div>
+
+            <div className="text-[10px] text-slate-500 italic pt-0.5">
+              Pad: Drag to look, Pinch/scroll to zoom • Mouse: Scroll to zoom, click to lock aim.
+            </div>
           </div>
-
-          <div className="grid grid-cols-2 gap-1.5 text-[11px] pt-1">
-            <div className="flex items-center space-x-1.5 bg-white/60 px-2 py-1 rounded-lg">
-              <kbd className="font-mono font-bold text-[10px] bg-slate-100 px-1.5 py-0.5 rounded border border-slate-300">
-                WASD
-              </kbd>
-              <span>Walk</span>
-            </div>
-
-            <div className="flex items-center space-x-1.5 bg-white/60 px-2 py-1 rounded-lg">
-              <kbd className="font-mono font-bold text-[10px] bg-slate-100 px-1.5 py-0.5 rounded border border-slate-300">
-                Space
-              </kbd>
-              <span>Jump</span>
-            </div>
-
-            <div className="flex items-center space-x-1.5 bg-white/60 px-2 py-1 rounded-lg">
-              <kbd className="font-mono font-bold text-[10px] bg-slate-100 px-1.5 py-0.5 rounded border border-slate-300">
-                E
-              </kbd>
-              <span>Inventory</span>
-            </div>
-
-            <div className="flex items-center space-x-1.5 bg-white/60 px-2 py-1 rounded-lg">
-              <span className="font-bold text-[10px] text-tropical-aqua">1–9</span>
-              <span>Hotbar</span>
-            </div>
-
-            <div className="flex items-center space-x-1.5 bg-white/60 px-2 py-1 rounded-lg">
-              <span className="font-bold text-emerald-600">Left-Click</span>
-              <span>Place Block</span>
-            </div>
-
-            <div className="flex items-center space-x-1.5 bg-white/60 px-2 py-1 rounded-lg">
-              <span className="font-bold text-rose-500">Right-Click</span>
-              <span>{isCreative ? 'Break' : 'Hold Mine'}</span>
-            </div>
-          </div>
-
-          <div className="text-[10px] text-slate-500 italic pt-0.5">
-            Press <kbd className="font-mono bg-slate-200 px-1 rounded">Esc</kbd> anytime to unlock cursor.
-          </div>
-        </div>
+        )}
       </div>
 
       {/* Minecraft-Style 9-Slot Hotbar & Survival Vitals HUD */}
@@ -620,6 +983,84 @@ export default function ThreeWorldCanvas() {
         </div>
       )}
 
+      {/* Floating Quick Dock: Sound Toggle, Settings, Quick Zoom & Pad/Mouse (Elevated to avoid Hotbar overlap) */}
+      <div className="absolute right-4 bottom-28 z-20 flex flex-col items-end space-y-2 pointer-events-auto select-none">
+        <div className="tropical-glass px-3 py-1.5 rounded-2xl border border-white/80 shadow-tropical-md flex items-center space-x-2 text-slate-700 backdrop-blur-md">
+          {/* Direct Sound Toggle Button */}
+          <button
+            onClick={() => worldStore.toggleSound()}
+            className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold flex items-center space-x-1.5 transition shadow-sm border active:scale-95 ${
+              soundMuted
+                ? 'bg-rose-50 text-rose-600 border-rose-200 hover:bg-rose-100'
+                : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+            }`}
+            title={soundMuted ? 'Sound is MUTED (Click to Turn Sound ON)' : 'Sound is ON (Click to Mute)'}
+          >
+            {soundMuted ? <VolumeX className="w-3.5 h-3.5 text-rose-500" /> : <Volume2 className="w-3.5 h-3.5 text-emerald-600" />}
+            <span className="hidden sm:inline">{soundMuted ? 'Muted' : 'Sound ON'}</span>
+          </button>
+
+          {/* Settings Modal Button */}
+          <button
+            onClick={() => worldStore.toggleSettingsModal()}
+            className="px-2.5 py-1.5 rounded-xl bg-white/80 hover:bg-slate-100 text-slate-700 text-[11px] font-bold flex items-center space-x-1.5 transition shadow-sm border border-slate-200/80 active:scale-95"
+            title="Settings: Audio, Cursor Sensitivity, Controls"
+          >
+            <Settings className="w-3.5 h-3.5 text-slate-600" />
+            <span className="hidden sm:inline">Settings</span>
+          </button>
+
+          <div className="h-4 w-px bg-slate-300" />
+
+          <button
+            onClick={() => engineRef.current.playerController?.zoomIn(1.2)}
+            className="w-8 h-8 rounded-xl bg-white/80 hover:bg-emerald-500 hover:text-white flex items-center justify-center transition shadow-sm border border-slate-200/80 active:scale-95"
+            title="Zoom In (Scroll up / Pinch in / Key X)"
+          >
+            <ZoomIn className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => engineRef.current.playerController?.zoomOut(1.2)}
+            className="w-8 h-8 rounded-xl bg-white/80 hover:bg-emerald-500 hover:text-white flex items-center justify-center transition shadow-sm border border-slate-200/80 active:scale-95"
+            title="Zoom Out (Scroll down / Pinch out / Key Z)"
+          >
+            <ZoomOut className="w-4 h-4" />
+          </button>
+
+          <div className="h-4 w-px bg-slate-300" />
+
+          <button
+            onClick={() => engineRef.current.playerController?.togglePerspective()}
+            className="px-2.5 py-1.5 rounded-xl bg-white/80 hover:bg-emerald-500 hover:text-white text-[11px] font-bold flex items-center space-x-1.5 transition shadow-sm border border-slate-200/80 active:scale-95"
+            title="Switch Perspective: 1st Person / 3rd Person (Key V / F5)"
+          >
+            <Eye className="w-3.5 h-3.5" />
+            <span>{cameraZoomLevel.split(' ')[0]}</span>
+          </button>
+
+          <div className="h-4 w-px bg-slate-300" />
+
+          <button
+            onClick={() => {
+              if (isLocked) {
+                engineRef.current.playerController?.unlock();
+              } else {
+                engineRef.current.playerController?.lock();
+              }
+            }}
+            className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold flex items-center space-x-1.5 transition shadow-sm border active:scale-95 ${
+              isLocked
+                ? 'bg-emerald-500 text-white border-emerald-400'
+                : 'bg-white/80 text-slate-700 hover:bg-slate-100 border-slate-200/80'
+            }`}
+            title="Toggle Mouse Look Lock / Pad Drag Look"
+          >
+            <MousePointer className="w-3.5 h-3.5" />
+            <span>{isLocked ? 'Aim Locked' : 'Pad Drag'}</span>
+          </button>
+        </div>
+      </div>
+
       {/* Subtle Toast when unlocked after dismissing initial overlay */}
       {hasDismissedOverlay && !isLocked && !isInventoryOpen && (
         <div
@@ -628,7 +1069,7 @@ export default function ThreeWorldCanvas() {
         >
           <div className="tropical-glass px-3 py-1.5 rounded-xl border border-white/80 shadow-md text-xs font-semibold text-slate-700 hover:bg-white flex items-center space-x-1.5 animate-fade-in">
             <MousePointer className="w-3.5 h-3.5 text-tropical-coral" />
-            <span>Click canvas to lock mouse</span>
+            <span>Pad: Drag to look • Click to lock aim</span>
           </div>
         </div>
       )}
@@ -639,7 +1080,10 @@ export default function ThreeWorldCanvas() {
 /**
  * Procedurally generates the 3D base paved street, sidewalks, and environment blocks from the world grid
  */
-function rebuildStreetWorld(group, grid, domain) {
+/**
+ * Builds expansive 360-unit landscape, paved roads, buildings, trees, and returns static colliders
+ */
+function rebuildStreetWorld(group, grid, domain, theme = 'pastel_dream') {
   while (group.children.length > 0) {
     const child = group.children[0];
     group.remove(child);
@@ -652,24 +1096,59 @@ function rebuildStreetWorld(group, grid, domain) {
 
   const gridSize = grid.length;
   const isExterior = domain === DOMAINS.EXTERIOR;
+  const isCyber = theme === 'cyber_dark';
+  const isSunset = theme === 'cozy_sunset';
 
+  const streetColliders = [];
+
+  // 1. Expansive 360x360 Ground Landscape (eliminates black void cutoff)
+  const EXT_SIZE = 360;
+  const groundGeom = new THREE.PlaneGeometry(EXT_SIZE, EXT_SIZE);
+  groundGeom.rotateX(-Math.PI / 2);
+  groundGeom.translate(gridSize / 2, -0.01, gridSize / 2);
+
+  const groundColor = isCyber
+    ? 0x070b18
+    : isSunset
+    ? 0x6e3d2a
+    : 0x48bb78; // rich lush meadow green
+
+  const groundMesh = new THREE.Mesh(
+    groundGeom,
+    new THREE.MeshStandardMaterial({
+      color: groundColor,
+      roughness: isCyber ? 0.9 : 0.85,
+      metalness: isCyber ? 0.2 : 0.05,
+    })
+  );
+  groundMesh.receiveShadow = true;
+  group.add(groundMesh);
+
+  // In Cyber Dark mode: add an expansive glowing Tron-style cyan/purple neon grid overlay
+  if (isCyber && isExterior) {
+    const cyberGrid = new THREE.GridHelper(EXT_SIZE, 180, 0x00f5d4, 0x1e1b4b);
+    cyberGrid.position.set(gridSize / 2, 0.01, gridSize / 2);
+    group.add(cyberGrid);
+  }
+
+  // 2. Tile Materials
   const streetAsphaltMat = new THREE.MeshStandardMaterial({
-    color: isExterior ? 0xe2e8f0 : 0xf8fafc,
+    color: isCyber ? 0x0f172a : isExterior ? 0xe2e8f0 : 0xf8fafc,
     roughness: 0.7,
   });
 
   const sidewalkMat = new THREE.MeshStandardMaterial({
-    color: 0xfbd2d7,
+    color: isCyber ? 0x1e293b : 0xfbd2d7,
     roughness: 0.5,
   });
 
   const grassMat = new THREE.MeshStandardMaterial({
-    color: 0x57cc99,
+    color: isCyber ? 0x0e2f38 : 0x57cc99,
     roughness: 0.6,
   });
 
   const waterMat = new THREE.MeshStandardMaterial({
-    color: 0x48cae4,
+    color: isCyber ? 0x00f5d4 : 0x48cae4,
     roughness: 0.15,
     metalness: 0.1,
     transparent: true,
@@ -677,22 +1156,11 @@ function rebuildStreetWorld(group, grid, domain) {
   });
 
   const woodBoardwalkMat = new THREE.MeshStandardMaterial({
-    color: 0xffd166,
+    color: isCyber ? 0x334155 : 0xffd166,
     roughness: 0.6,
   });
 
-  // Base Ground Plane
-  const groundGeom = new THREE.PlaneGeometry(gridSize + 8, gridSize + 8);
-  groundGeom.rotateX(-Math.PI / 2);
-  groundGeom.translate(gridSize / 2, -0.01, gridSize / 2);
-  const groundMesh = new THREE.Mesh(
-    groundGeom,
-    new THREE.MeshStandardMaterial({ color: isExterior ? 0xecfdf5 : 0xfdf2f8, roughness: 0.8 })
-  );
-  groundMesh.receiveShadow = true;
-  group.add(groundMesh);
-
-  // Iterate tiles to create paved streets, sidewalks, and buildings
+  // 3. Iterate tiles to create paved streets, sidewalks, and buildings
   for (let r = 0; r < gridSize; r++) {
     for (let c = 0; c < gridSize; c++) {
       const tile = grid[r][c];
@@ -700,10 +1168,19 @@ function rebuildStreetWorld(group, grid, domain) {
       const x = c;
       const z = r;
 
+      // Distance from player spawn (4.5, 4.5)
+      const distFromSpawn = Math.hypot(x - 4.5, z - 4.5);
+      const isSpawnPlaza = distFromSpawn < 3.8;
+      const isRoad = (r === 4 || r === 11 || c === 4 || c === 11) && isExterior;
+
       let tileMat = streetAsphaltMat;
       let tileHeight = 0.12;
 
-      if (terrainType.includes('lawn') || terrainType.includes('meadow') || terrainType.includes('grass')) {
+      if (isSpawnPlaza) {
+        // Central Town Plaza around player spawn: wide, open, clean, beautiful cobblestone/terrazzo
+        tileMat = sidewalkMat;
+        tileHeight = 0.14;
+      } else if (terrainType.includes('lawn') || terrainType.includes('meadow') || terrainType.includes('grass')) {
         tileMat = grassMat;
         tileHeight = 0.14;
       } else if (terrainType.includes('pool') || terrainType.includes('water')) {
@@ -713,7 +1190,7 @@ function rebuildStreetWorld(group, grid, domain) {
         tileMat = woodBoardwalkMat;
         tileHeight = 0.16;
       } else if (terrainType.includes('sand')) {
-        tileMat = new THREE.MeshStandardMaterial({ color: 0xfff6ed, roughness: 0.8 });
+        tileMat = new THREE.MeshStandardMaterial({ color: isCyber ? 0x1e293b : 0xfff6ed, roughness: 0.8 });
         tileHeight = 0.1;
       } else if (terrainType.includes('patio') || terrainType.includes('terrazzo')) {
         tileMat = sidewalkMat;
@@ -730,40 +1207,63 @@ function rebuildStreetWorld(group, grid, domain) {
       group.add(tileMesh);
 
       // Paved road curb markings
-      if ((r === 4 || r === 11 || c === 4 || c === 11) && isExterior) {
+      if (isRoad) {
         const lineGeom = new THREE.PlaneGeometry(0.18, 0.6);
         lineGeom.rotateX(-Math.PI / 2);
-        const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        const lineMat = new THREE.MeshBasicMaterial({ color: isCyber ? 0x00f5d4 : 0xffffff });
         const lineMesh = new THREE.Mesh(lineGeom, lineMat);
         lineMesh.position.set(x + 0.5, tileHeight + 0.01, z + 0.5);
         group.add(lineMesh);
       }
 
-      // If tile has building prop, render blocky architecture
+      // DO NOT spawn blocking props or trees on the Central Town Plaza or directly on road lanes
+      if (isSpawnPlaza || isRoad) {
+        continue;
+      }
+
+      // If tile has building prop, render blocky architecture or harvestable Lego tree
       if (tile?.prop) {
         const propId = String(typeof tile.prop === 'string' ? tile.prop : (tile.prop.id || ''));
-        let propColor = 0xff6b8b;
+
+        // Harvestable 3D Lego Oak & Palm Trees with Wood Trunks
+        if (propId.includes('palm') || propId.includes('tree') || propId.includes('flora')) {
+          const tree = createHarvestableTree(x + 0.5, tileHeight, z + 0.5, 3, `tree-${x}-${z}`);
+          group.add(tree);
+          streetColliders.push({
+            minX: x + 0.15,
+            maxX: x + 0.85,
+            minY: 0,
+            maxY: 3.2,
+            minZ: z + 0.15,
+            maxZ: z + 0.85,
+          });
+          continue;
+        }
+
+        let propColor = isCyber ? 0x7000ff : 0xff6b8b;
         let pHeight = 1.8;
 
         if (propId.includes('pavilion') || propId.includes('villa') || propId.includes('hotel') || propId.includes('house')) {
           pHeight = 2.4;
-          propColor = 0xffd166;
+          propColor = isCyber ? 0x00f5d4 : 0xffd166;
         } else if (propId.includes('tower') || propId.includes('skyscraper')) {
           pHeight = 3.6;
-          propColor = 0x00bbf9;
-        } else if (propId.includes('palm') || propId.includes('tree')) {
-          pHeight = 2.0;
-          propColor = 0x2ec4b6;
+          propColor = isCyber ? 0x3b82f6 : 0x00bbf9;
         } else if (propId.includes('wall')) {
           pHeight = 2.4;
-          propColor = 0xffffff;
+          propColor = isCyber ? 0x1e293b : 0xffffff;
         } else if (propId.includes('terrace') || propId.includes('stairs')) {
           pHeight = 1.4;
-          propColor = 0xffa07a;
+          propColor = isCyber ? 0x8b5cf6 : 0xffa07a;
         }
 
         const bGeom = new THREE.BoxGeometry(0.85, pHeight, 0.85);
-        const bMat = new THREE.MeshStandardMaterial({ color: propColor, roughness: 0.4 });
+        const bMat = new THREE.MeshStandardMaterial({
+          color: propColor,
+          roughness: isCyber ? 0.2 : 0.4,
+          metalness: isCyber ? 0.3 : 0.0,
+          emissive: isCyber ? new THREE.Color(propColor).multiplyScalar(0.25) : new THREE.Color(0x000000),
+        });
         const bMesh = new THREE.Mesh(bGeom, bMat);
         bMesh.position.set(x + 0.5, tileHeight + pHeight / 2, z + 0.5);
         bMesh.castShadow = true;
@@ -773,61 +1273,134 @@ function rebuildStreetWorld(group, grid, domain) {
 
         const roofGeom = new THREE.ConeGeometry(0.65, 0.6, 4);
         roofGeom.rotateY(Math.PI / 4);
-        const roofMatLocal = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
+        const roofMatLocal = new THREE.MeshStandardMaterial({
+          color: isCyber ? 0x00f5d4 : 0xffffff,
+          roughness: 0.3,
+        });
         const roofMesh = new THREE.Mesh(roofGeom, roofMatLocal);
         roofMesh.position.set(x + 0.5, tileHeight + pHeight + 0.3, z + 0.5);
         roofMesh.castShadow = true;
         group.add(roofMesh);
+
+        streetColliders.push({
+          minX: x + 0.08,
+          maxX: x + 0.92,
+          minY: 0,
+          maxY: pHeight,
+          minZ: z + 0.08,
+          maxZ: z + 0.92,
+        });
+      } else if (isExterior && (terrainType.includes('lawn') || terrainType.includes('meadow') || terrainType.includes('grass'))) {
+        // Natural Harvestable Voxel Trees across open meadows - spaced naturally away from spawn
+        const isRoadBuffer = (r >= 3 && r <= 5) || (r >= 10 && r <= 12) || (c >= 3 && c <= 5) || (c >= 10 && c <= 12);
+        if (distFromSpawn >= 5.5 && !isRoadBuffer) {
+          const hash = (r * 31 + c * 47) % 23;
+          if (hash === 7) {
+            const natTree = createHarvestableTree(x + 0.5, tileHeight, z + 0.5, 3, `tree-nat-${x}-${z}`);
+            group.add(natTree);
+            streetColliders.push({
+              minX: x + 0.15,
+              maxX: x + 0.85,
+              minY: 0,
+              maxY: 3.2,
+              minZ: z + 0.15,
+              maxZ: z + 0.85,
+            });
+          }
+        }
       }
     }
   }
+
+  return streetColliders;
 }
 
 /**
  * Applies dynamic skybox and atmospheric lighting according to selected theme
  */
 function applyThemeEnvironment(engine, theme) {
-  const { scene, sunLight, ambientLight } = engine;
+  const { scene, sunLight, ambientLight, legoEngine } = engine;
   if (!scene) return;
 
-  if (theme === 'midnight_dark') {
-    scene.background = new THREE.Color(0x0f172a);
-    scene.fog = new THREE.FogExp2(0x0f172a, 0.022);
+  const themeObj = getThemeById(theme);
+  const atmos = themeObj?.atmosphere3D;
+
+  if (atmos) {
+    scene.background = new THREE.Color(atmos.skyColor);
+    // Smooth linear fog to seamlessly blend the 360-unit ground into the horizon sky
+    scene.fog = new THREE.Fog(atmos.fogColor, 40, 145);
 
     if (ambientLight) {
-      ambientLight.color.setHex(0x334155);
-      ambientLight.intensity = 0.6;
+      ambientLight.color.setHex(atmos.ambientColor);
+      ambientLight.intensity = atmos.ambientIntensity;
     }
     if (sunLight) {
-      sunLight.color.setHex(0x93c5fd);
-      sunLight.intensity = 0.8;
-      sunLight.position.set(-15, 30, -10);
+      sunLight.color.setHex(atmos.sunColor);
+      sunLight.intensity = atmos.sunIntensity;
+      sunLight.position.set(...atmos.sunPos);
     }
-  } else if (theme === 'soft_retro') {
-    scene.background = new THREE.Color(0xfef3c7);
-    scene.fog = new THREE.FogExp2(0xfef3c7, 0.015);
-
-    if (ambientLight) {
-      ambientLight.color.setHex(0xffedd5);
-      ambientLight.intensity = 0.9;
-    }
-    if (sunLight) {
-      sunLight.color.setHex(0xfb923c);
-      sunLight.intensity = 1.3;
-      sunLight.position.set(30, 25, 15);
-    }
-  } else {
-    scene.background = new THREE.Color(0xbde9ff);
-    scene.fog = new THREE.FogExp2(0xbde9ff, 0.012);
-
-    if (ambientLight) {
-      ambientLight.color.setHex(0xffffff);
-      ambientLight.intensity = 0.95;
-    }
-    if (sunLight) {
-      sunLight.color.setHex(0xfff5ea);
-      sunLight.intensity = 1.4;
-      sunLight.position.set(24, 38, 20);
+    if (legoEngine?.setThemeAtmosphere) {
+      legoEngine.setThemeAtmosphere(atmos);
     }
   }
 }
+
+/**
+ * Creates a high-DPI 3D billboard sprite with a stylized username plate
+ */
+function createNameplateSprite(username = 'Player') {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+
+  // Background rounded pill
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
+  const r = 28;
+  const x = 20, y = 20, w = 472, h = 88;
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+  ctx.fill();
+
+  // Vibrant gradient border
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+  ctx.stroke();
+
+  // Green active pulse dot
+  ctx.beginPath();
+  ctx.arc(x + 46, y + h / 2, 14, 0, Math.PI * 2);
+  ctx.fillStyle = '#2ec4b6';
+  ctx.fill();
+
+  // Username text
+  ctx.font = 'bold 36px "Outfit", "Inter", sans-serif';
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  const display = (username || 'Player').length > 15 ? (username || 'Player').substring(0, 14) + '…' : (username || 'Player');
+  ctx.fillText(display, x + 76, y + h / 2);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.LinearFilter;
+  const spriteMaterial = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: false,
+  });
+  const sprite = new THREE.Sprite(spriteMaterial);
+  sprite.scale.set(1.8, 0.45, 1.0);
+  sprite.position.set(0, 2.3, 0);
+  sprite.name = 'nameplateSprite';
+  return sprite;
+}
+

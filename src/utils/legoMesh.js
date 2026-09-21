@@ -125,6 +125,120 @@ export function getLegoLanternGeometry() {
 }
 
 /**
+ * Mini Pastel Bookshelf Geometry
+ */
+export function getLegoBookshelfGeometry() {
+  const shelfGeom = new THREE.BoxGeometry(0.85, 0.08, 0.38);
+  const shelf1 = shelfGeom.clone().translate(0, 0.04, 0);
+  const shelf2 = shelfGeom.clone().translate(0, 0.48, 0);
+  const shelf3 = shelfGeom.clone().translate(0, 0.92, 0);
+
+  // Side pillars
+  const pillarGeom = new THREE.BoxGeometry(0.08, 0.96, 0.38);
+  const leftPillar = pillarGeom.clone().translate(-0.4, 0.48, 0);
+  const rightPillar = pillarGeom.clone().translate(0.4, 0.48, 0);
+
+  // Books row on middle shelf
+  const bookGeom = new THREE.BoxGeometry(0.55, 0.34, 0.28);
+  bookGeom.translate(0, 0.69, 0);
+
+  // 2 Top Studs
+  const stud = new THREE.CylinderGeometry(0.12, 0.12, 0.1, 12);
+  const s1 = stud.clone().translate(-0.25, 1.01, 0);
+  const s2 = stud.clone().translate(0.25, 1.01, 0);
+
+  const merged = mergeGeometries([shelf1, shelf2, shelf3, leftPillar, rightPillar, bookGeom, s1, s2], false);
+  merged.computeVertexNormals();
+  return merged;
+}
+
+/**
+ * Mini Cozy Armchair / Sofa Geometry
+ */
+export function getLegoSofaGeometry() {
+  // Main seat cushion
+  const seatGeom = new THREE.BoxGeometry(0.88, 0.24, 0.72);
+  seatGeom.translate(0, 0.28, 0.02);
+
+  // Back cushion
+  const backGeom = new THREE.BoxGeometry(0.88, 0.52, 0.22);
+  backGeom.translate(0, 0.62, -0.25);
+
+  // Armrests
+  const armGeom = new THREE.BoxGeometry(0.18, 0.42, 0.68);
+  const armL = armGeom.clone().translate(-0.44, 0.46, 0.02);
+  const armR = armGeom.clone().translate(0.44, 0.46, 0.02);
+
+  // Base feet
+  const footGeom = new THREE.BoxGeometry(0.86, 0.14, 0.7);
+  footGeom.translate(0, 0.07, 0);
+
+  // Studs on armrests
+  const stud = new THREE.CylinderGeometry(0.1, 0.1, 0.08, 12);
+  const st1 = stud.clone().translate(-0.44, 0.71, 0.15);
+  const st2 = stud.clone().translate(0.44, 0.71, 0.15);
+
+  const merged = mergeGeometries([seatGeom, backGeom, armL, armR, footGeom, st1, st2], false);
+  merged.computeVertexNormals();
+  return merged;
+}
+
+/**
+ * Patchwork Mini Bed Geometry
+ */
+export function getLegoBedGeometry() {
+  // Wooden frame
+  const frameGeom = new THREE.BoxGeometry(0.88, 0.18, 0.96);
+  frameGeom.translate(0, 0.09, 0);
+
+  // Mattress
+  const mattressGeom = new THREE.BoxGeometry(0.82, 0.22, 0.90);
+  mattressGeom.translate(0, 0.26, -0.01);
+
+  // Headboard
+  const headboard = new THREE.BoxGeometry(0.88, 0.58, 0.14);
+  headboard.translate(0, 0.38, -0.42);
+
+  // Fluffy Pillow
+  const pillow = new THREE.BoxGeometry(0.65, 0.12, 0.26);
+  pillow.translate(0, 0.42, -0.24);
+
+  // 2 Headboard studs
+  const stud = new THREE.CylinderGeometry(0.1, 0.1, 0.08, 12);
+  const s1 = stud.clone().translate(-0.28, 0.71, -0.42);
+  const s2 = stud.clone().translate(0.28, 0.71, -0.42);
+
+  const merged = mergeGeometries([frameGeom, mattressGeom, headboard, pillow, s1, s2], false);
+  merged.computeVertexNormals();
+  return merged;
+}
+
+/**
+ * Standing Floor Lamp Geometry
+ */
+export function getLegoLampGeometry() {
+  // Base plate
+  const baseGeom = new THREE.CylinderGeometry(0.32, 0.35, 0.08, 16);
+  baseGeom.translate(0, 0.04, 0);
+
+  // Tall Pole
+  const poleGeom = new THREE.CylinderGeometry(0.06, 0.06, 0.92, 12);
+  poleGeom.translate(0, 0.54, 0);
+
+  // Lamp Shade
+  const shadeGeom = new THREE.ConeGeometry(0.28, 0.34, 16, 1, true);
+  shadeGeom.translate(0, 0.96, 0);
+
+  // Glowing bulb
+  const bulbGeom = new THREE.SphereGeometry(0.12, 10, 10);
+  bulbGeom.translate(0, 0.94, 0);
+
+  const merged = mergeGeometries([baseGeom, poleGeom, shadeGeom, bulbGeom], false);
+  merged.computeVertexNormals();
+  return merged;
+}
+
+/**
  * Mini Potted Plant Geometry
  */
 export function getLegoPlantGeometry() {
@@ -156,6 +270,10 @@ export function getGeometryForType(propId) {
   if (propId === 'lego_table') return getLegoTableGeometry();
   if (propId === 'lego_lantern') return getLegoLanternGeometry();
   if (propId === 'lego_plant') return getLegoPlantGeometry();
+  if (propId === 'lego_bookshelf') return getLegoBookshelfGeometry();
+  if (propId === 'lego_sofa') return getLegoSofaGeometry();
+  if (propId === 'lego_bed') return getLegoBedGeometry();
+  if (propId === 'lego_lamp') return getLegoLampGeometry();
   return getLegoBrickGeometry();
 }
 
@@ -167,8 +285,18 @@ export function createLegoMaterial(color = '#ff6b8b', propId = null) {
     return new THREE.MeshStandardMaterial({
       color: new THREE.Color(color),
       emissive: new THREE.Color('#ffb703'),
-      emissiveIntensity: 0.75,
+      emissiveIntensity: 0.95,
       roughness: 0.2,
+      metalness: 0.1,
+    });
+  }
+
+  if (propId === 'lego_lamp') {
+    return new THREE.MeshStandardMaterial({
+      color: new THREE.Color(color),
+      emissive: new THREE.Color('#ffd166'),
+      emissiveIntensity: 0.85,
+      roughness: 0.25,
       metalness: 0.1,
     });
   }
@@ -210,67 +338,108 @@ export function createGhostBrick() {
  * Cracking Overlay Mesh for Survival 1-Second Mining Animation
  */
 export function createCrackingOverlay() {
-  const geom = new THREE.BoxGeometry(1.02, 1.02, 1.02);
+  const group = new THREE.Group();
+  const geom = new THREE.BoxGeometry(1.03, 1.03, 1.03);
   geom.translate(0, 0.5, 0);
 
-  // Progressive crack wireframe lines
+  // Outer dark crack wireframe box
   const wireMat = new THREE.MeshBasicMaterial({
-    color: 0x000000,
+    color: 0x111111,
     wireframe: true,
     transparent: true,
     opacity: 0.0,
     depthWrite: false,
   });
+  const wireMesh = new THREE.Mesh(geom, wireMat);
+  group.add(wireMesh);
 
-  const mesh = new THREE.Mesh(geom, wireMat);
-  mesh.visible = false;
-  return mesh;
+  // Red/coral stress flash overlay
+  const flashMat = new THREE.MeshBasicMaterial({
+    color: 0xff3b30,
+    transparent: true,
+    opacity: 0.0,
+    depthWrite: false,
+  });
+  const flashMesh = new THREE.Mesh(geom, flashMat);
+  group.add(flashMesh);
+
+  group.visible = false;
+  group.material = wireMat;
+  group.flashMaterial = flashMat;
+
+  // Helper method to set progress (0.0 to 1.0)
+  group.setProgress = (p) => {
+    wireMat.opacity = Math.min(0.95, 0.2 + p * 0.75);
+    flashMat.opacity = Math.min(0.35, p * 0.35);
+  };
+
+  return group;
 }
 
+// Spatial Chunk Size (8x8 bricks per chunk)
+const CHUNK_SIZE = 8;
+
 /**
- * High-Performance Instanced & Prop Voxel Manager
+ * Represents an 8x8 spatial chunk of Lego bricks & props with localized InstancedMesh and bounding box
  */
-export class LegoVoxelEngine {
-  constructor(scene, maxBricks = 2500) {
+class LegoChunk {
+  constructor(scene, chunkX, chunkZ, geometry, material) {
     this.scene = scene;
-    this.maxBricks = maxBricks;
-    this.geometry = getLegoBrickGeometry();
+    this.chunkX = chunkX;
+    this.chunkZ = chunkZ;
+    this.geometry = geometry;
+    this.material = material;
+    this.maxInstances = 512;
 
-    // Standard InstancedMesh for regular Lego blocks
-    this.material = new THREE.MeshStandardMaterial({
-      roughness: 0.3,
-      metalness: 0.05,
-    });
+    this.group = new THREE.Group();
+    this.group.name = `chunk_${chunkX}_${chunkZ}`;
 
-    this.instancedMesh = new THREE.InstancedMesh(this.geometry, this.material, maxBricks);
+    this.instancedMesh = new THREE.InstancedMesh(this.geometry, this.material, this.maxInstances);
     this.instancedMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.instancedMesh.castShadow = true;
     this.instancedMesh.receiveShadow = true;
     this.instancedMesh.count = 0;
-    this.scene.add(this.instancedMesh);
+    this.instancedMesh.frustumCulled = true;
+    this.instancedMesh.userData = { isInteractable: true, isLegoChunk: true, chunk: this };
+    this.group.add(this.instancedMesh);
 
-    // Group for custom interior props (chairs, tables, glowing lanterns)
     this.propsGroup = new THREE.Group();
-    this.scene.add(this.propsGroup);
+    this.group.add(this.propsGroup);
 
-    // Group for lantern point lights
     this.lightsGroup = new THREE.Group();
-    this.scene.add(this.lightsGroup);
+    this.group.add(this.lightsGroup);
 
-    // Map: key "${x},${y},${z}" -> brick data
-    this.bricksMap = new Map();
+    this.scene.add(this.group);
 
+    this.bricks = [];
+    this.boundingBox = new THREE.Box3();
+    this.boundingSphere = new THREE.Sphere();
     this.dummy = new THREE.Object3D();
     this.tempColor = new THREE.Color();
+    this.visible = true;
   }
 
-  /**
-   * Syncs with world store legoBricks array
-   */
-  syncBricks(bricks) {
-    this.bricksMap.clear();
+  addBrick(brick) {
+    this.bricks.push(brick);
+  }
 
-    // Clear previous prop meshes & lantern lights
+  clear() {
+    this.bricks = [];
+    this.instancedMesh.count = 0;
+    while (this.propsGroup.children.length > 0) {
+      const p = this.propsGroup.children[0];
+      this.propsGroup.remove(p);
+      if (p.material) p.material.dispose();
+    }
+    while (this.lightsGroup.children.length > 0) {
+      const l = this.lightsGroup.children[0];
+      this.lightsGroup.remove(l);
+      if (l.dispose) l.dispose();
+    }
+  }
+
+  rebuild() {
+    // Clear props & lights
     while (this.propsGroup.children.length > 0) {
       const p = this.propsGroup.children[0];
       this.propsGroup.remove(p);
@@ -282,34 +451,41 @@ export class LegoVoxelEngine {
       if (l.dispose) l.dispose();
     }
 
-    let standardInstanceCount = 0;
+    let stdCount = 0;
+    const min = new THREE.Vector3(Infinity, Infinity, Infinity);
+    const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
 
-    for (let i = 0; i < bricks.length; i++) {
-      const b = bricks[i];
-      const key = `${b.x},${b.y},${b.z}`;
-      this.bricksMap.set(key, { ...b });
+    for (let i = 0; i < this.bricks.length; i++) {
+      const b = this.bricks[i];
+      min.x = Math.min(min.x, b.x);
+      min.y = Math.min(min.y, b.y);
+      min.z = Math.min(min.z, b.z);
+      max.x = Math.max(max.x, b.x + 1);
+      max.y = Math.max(max.y, b.y + 1.25);
+      max.z = Math.max(max.z, b.z + 1);
 
       if (b.propId) {
-        // Individual custom interior prop mesh
         const propGeom = getGeometryForType(b.propId);
         const propMat = createLegoMaterial(b.color || '#ffd166', b.propId);
         const propMesh = new THREE.Mesh(propGeom, propMat);
         propMesh.position.set(b.x + 0.5, b.y, b.z + 0.5);
         propMesh.castShadow = true;
         propMesh.receiveShadow = true;
-        propMesh.userData = { isInteractable: true, brickKey: key, ...b };
+        propMesh.userData = { isInteractable: true, brickKey: `${b.x},${b.y},${b.z}`, ...b };
         this.propsGroup.add(propMesh);
 
-        // If lantern, add a warm soft PointLight!
         if (b.propId === 'lego_lantern') {
           const pLight = new THREE.PointLight(0xffaa33, 1.8, 7.5);
           pLight.position.set(b.x + 0.5, b.y + 0.6, b.z + 0.5);
           this.lightsGroup.add(pLight);
+        } else if (b.propId === 'lego_lamp') {
+          const pLight = new THREE.PointLight(0xffedd5, 1.6, 6.5);
+          pLight.position.set(b.x + 0.5, b.y + 0.95, b.z + 0.5);
+          this.lightsGroup.add(pLight);
         }
       } else {
-        // Standard Lego block in InstancedMesh
-        if (standardInstanceCount < this.maxBricks) {
-          const idx = standardInstanceCount++;
+        if (stdCount < this.maxInstances) {
+          const idx = stdCount++;
           this.dummy.position.set(b.x + 0.5, b.y, b.z + 0.5);
           this.dummy.rotation.set(0, 0, 0);
           this.dummy.scale.set(1, 1, 1);
@@ -322,11 +498,144 @@ export class LegoVoxelEngine {
       }
     }
 
-    this.instancedMesh.count = standardInstanceCount;
+    this.instancedMesh.count = stdCount;
     this.instancedMesh.instanceMatrix.needsUpdate = true;
     if (this.instancedMesh.instanceColor) {
       this.instancedMesh.instanceColor.needsUpdate = true;
     }
+
+    if (this.bricks.length > 0) {
+      this.boundingBox.set(min, max);
+      this.boundingBox.getBoundingSphere(this.boundingSphere);
+    } else {
+      this.boundingBox.makeEmpty();
+    }
+  }
+
+  setVisible(visible) {
+    if (this.visible === visible) return;
+    this.visible = visible;
+    this.group.visible = visible;
+  }
+
+  dispose() {
+    this.clear();
+    this.scene.remove(this.group);
+    this.instancedMesh.dispose();
+  }
+}
+
+/**
+ * High-Performance Chunked & Frustum-Culled Lego Voxel Engine (60 FPS QA)
+ */
+export class LegoVoxelEngine {
+  constructor(scene, maxBricks = 4000) {
+    this.scene = scene;
+    this.geometry = getLegoBrickGeometry();
+
+    // Standard material with theme stud glow capability
+    this.material = new THREE.MeshStandardMaterial({
+      roughness: 0.28,
+      metalness: 0.08,
+      emissive: new THREE.Color(0x000000),
+      emissiveIntensity: 0.0,
+    });
+
+    this.chunks = new Map(); // key: "cx,cz" -> LegoChunk
+    this.bricksMap = new Map(); // key: "x,y,z" -> brick
+
+    // Backwards compatibility references
+    this.instancedMesh = null;
+    this.propsGroup = new THREE.Group();
+
+    // Reusable frustum testing objects
+    this.frustum = new THREE.Frustum();
+    this.projScreenMatrix = new THREE.Matrix4();
+  }
+
+  getOrCreateChunk(cx, cz) {
+    const key = `${cx},${cz}`;
+    if (!this.chunks.has(key)) {
+      const chunk = new LegoChunk(this.scene, cx, cz, this.geometry, this.material);
+      this.chunks.set(key, chunk);
+      if (!this.instancedMesh) {
+        this.instancedMesh = chunk.instancedMesh;
+      }
+    }
+    return this.chunks.get(key);
+  }
+
+  /**
+   * Syncs with world store legoBricks array using spatial 8x8 chunking
+   */
+  syncBricks(bricks) {
+    this.bricksMap.clear();
+    this.chunks.forEach((chunk) => chunk.clear());
+
+    for (let i = 0; i < bricks.length; i++) {
+      const b = bricks[i];
+      const key = `${b.x},${b.y},${b.z}`;
+      this.bricksMap.set(key, { ...b });
+
+      const cx = Math.floor(b.x / CHUNK_SIZE);
+      const cz = Math.floor(b.z / CHUNK_SIZE);
+      const chunk = this.getOrCreateChunk(cx, cz);
+      chunk.addBrick(b);
+    }
+
+    this.chunks.forEach((chunk) => chunk.rebuild());
+  }
+
+  /**
+   * Active Frustum Culling: skips rendering chunks outside camera view with safe margin
+   */
+  updateFrustum(camera) {
+    if (!camera) return;
+    camera.updateMatrixWorld();
+    this.projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    this.frustum.setFromProjectionMatrix(this.projScreenMatrix);
+
+    const marginBox = new THREE.Box3();
+
+    this.chunks.forEach((chunk) => {
+      if (chunk.bricks.length === 0) {
+        chunk.setVisible(false);
+        return;
+      }
+      marginBox.copy(chunk.boundingBox).expandByScalar(2.5);
+      const inView = this.frustum.intersectsBox(marginBox);
+      chunk.setVisible(inView);
+    });
+  }
+
+  /**
+   * Updates stud emissive glow and material parameters to match active theme
+   */
+  setThemeAtmosphere(atmosphere3D) {
+    if (!atmosphere3D) return;
+    if (atmosphere3D.studEmissive !== undefined) {
+      this.material.emissive.setHex(atmosphere3D.studEmissive);
+      this.material.emissiveIntensity = atmosphere3D.studEmissiveIntensity || 0.0;
+      this.material.needsUpdate = true;
+    }
+  }
+
+  /**
+   * Collects all active interactable meshes across chunks for raycasting
+   */
+  getInteractableObjects() {
+    const targets = [];
+    this.chunks.forEach((chunk) => {
+      if (chunk.visible) {
+        if (chunk.instancedMesh.count > 0) {
+          targets.push(chunk.instancedMesh);
+        }
+        if (chunk.propsGroup.children.length > 0) {
+          chunk.propsGroup.children.forEach((c) => targets.push(c));
+        }
+      }
+    });
+    return targets;
   }
 
   hasBrickAt(x, y, z) {
@@ -353,12 +662,10 @@ export class LegoVoxelEngine {
   }
 
   dispose() {
-    if (this.instancedMesh) {
-      this.scene.remove(this.instancedMesh);
-      this.scene.remove(this.propsGroup);
-      this.scene.remove(this.lightsGroup);
-      this.geometry.dispose();
-      this.material.dispose();
-    }
+    this.chunks.forEach((chunk) => chunk.dispose());
+    this.chunks.clear();
+    this.geometry.dispose();
+    this.material.dispose();
   }
 }
+

@@ -20,8 +20,18 @@ import {
   Shuffle,
   Box,
   Grid3X3,
-  Maximize2
+  Maximize2,
+  Globe,
+  Users,
+  Radio,
+  ChevronDown,
+  Check,
+  Cloud,
+  Palette,
+  HardDrive,
+  Settings,
 } from 'lucide-react';
+import { THEMES, getThemeById } from '../types/avatar';
 
 export default function HeaderBar({ onOpenHelp }) {
   const {
@@ -34,12 +44,16 @@ export default function HeaderBar({ onOpenHelp }) {
     seed,
     avatarConfig,
     viewMode,
+    multiplayer,
   } = useWorldStore();
 
   const [showJsonModal, setShowJsonModal] = useState(false);
   const [showSeedModal, setShowSeedModal] = useState(false);
+  const [showThemeDropdown, setShowThemeDropdown] = useState(false);
   const [jsonInput, setJsonInput] = useState('');
   const [seedInput, setSeedInput] = useState(seed);
+
+  const activeThemeObj = getThemeById(avatarConfig?.theme);
 
   const isExterior = activeDomain === DOMAINS.EXTERIOR;
   const currentGrid = isExterior ? exteriorGrid : interiorGrid;
@@ -127,7 +141,7 @@ export default function HeaderBar({ onOpenHelp }) {
       <header className="absolute top-4 left-4 right-4 z-20 flex items-center justify-between pointer-events-none">
         {/* Logo & Title */}
         <div className="tropical-glass px-4 py-2.5 rounded-2xl flex items-center space-x-3 pointer-events-auto border border-white/80 shadow-tropical-md">
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-[#ff6b8b] via-[#ffd166] to-[#00bbf9] flex items-center justify-center shadow-coral-glow">
+          <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg shadow-emerald-500/25">
             <Sparkles className="w-5 h-5 text-white" />
           </div>
           <div>
@@ -221,11 +235,11 @@ export default function HeaderBar({ onOpenHelp }) {
           </div>
         </div>
 
-        {/* Player Avatar Profile Pill */}
+        {/* Dedicated "Alag Se" Avatar Studio Pill */}
         <button
-          onClick={() => worldStore.openOnboarding()}
+          onClick={() => worldStore.openAvatarStudio()}
           className="tropical-glass px-3 py-1.5 rounded-2xl flex items-center space-x-2 pointer-events-auto border border-white/80 shadow-tropical-md hover:scale-105 transition"
-          title="Customize Avatar & Game Settings"
+          title="Open Dedicated 3D Avatar Studio (Keybind: C)"
         >
           <div
             className="w-7 h-7 rounded-xl flex items-center justify-center text-white shadow-sm border border-white/90"
@@ -237,13 +251,148 @@ export default function HeaderBar({ onOpenHelp }) {
             />
           </div>
           <div className="text-left hidden lg:block">
-            <div className="text-xs font-bold text-slate-800 leading-tight">
-              {avatarConfig?.username || 'Builder'}
+            <div className="text-xs font-bold text-slate-800 leading-tight flex items-center space-x-1">
+              <span>{avatarConfig?.username || 'Builder'}</span>
+              <kbd className="text-[9px] font-mono font-bold bg-black/5 dark:bg-white/10 px-1 rounded text-slate-500">[C]</kbd>
             </div>
-            <div className="text-[9px] uppercase font-bold text-tropical-coral tracking-wider">
-              {GAME_MODES[avatarConfig?.gameMode]?.name || 'Dreamweaver'}
+            <div
+              className="text-[9px] uppercase font-bold tracking-wider"
+              style={{ color: GAME_MODES[avatarConfig?.gameMode]?.color || '#ff6b8b' }}
+            >
+              {GAME_MODES[avatarConfig?.gameMode]?.name || 'Creative'} • Avatar Studio
             </div>
           </div>
+        </button>
+
+        {/* Multiplayer Lobby Pill */}
+        <button
+          onClick={() => worldStore.toggleMultiplayerModal()}
+          className={`tropical-glass px-3 py-1.5 rounded-2xl flex items-center space-x-2 pointer-events-auto border border-white/80 shadow-tropical-md transition hover:scale-105 ${
+            multiplayer?.status === 'connected'
+              ? 'bg-emerald-500/15 border-emerald-400/50'
+              : ''
+          }`}
+          title="Multiplayer World Session & Room Code"
+        >
+          <div className="relative flex items-center justify-center">
+            {multiplayer?.status === 'connected' ? (
+              <>
+                <span className="animate-ping absolute inline-flex h-3 w-3 rounded-full bg-emerald-400 opacity-75" />
+                <Globe className="w-4 h-4 text-emerald-600" />
+              </>
+            ) : (
+              <Globe className="w-4 h-4 text-tropical-coral" />
+            )}
+          </div>
+          <div className="text-left hidden sm:block">
+            <div className="text-xs font-bold text-slate-800 flex items-center space-x-1.5 leading-tight">
+              <span>{multiplayer?.status === 'connected' ? multiplayer.roomCode : 'Multiplayer'}</span>
+              {multiplayer?.status === 'connected' && (
+                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-500 text-white">
+                  {1 + Object.keys(multiplayer.remotePlayers || {}).length}
+                </span>
+              )}
+            </div>
+            <div className="text-[9px] uppercase font-bold tracking-wider text-slate-500">
+              {multiplayer?.status === 'connected'
+                ? (multiplayer.isHost ? '👑 Host' : '👤 Guest')
+                : 'Co-Op Build'}
+            </div>
+          </div>
+        </button>
+
+        {/* Dynamic Theme Engine Hot-Swap Dropdown */}
+        <div className="relative pointer-events-auto">
+          <button
+            onClick={() => setShowThemeDropdown(!showThemeDropdown)}
+            className="tropical-glass px-3 py-1.5 rounded-2xl flex items-center space-x-2 border border-white/80 shadow-tropical-md transition hover:scale-105"
+            title="Hot-Swap World Theme (Lighting, Fog & Sky)"
+          >
+            <div className="flex items-center -space-x-1">
+              {activeThemeObj?.preview?.map((color, i) => (
+                <span
+                  key={i}
+                  className="w-3 h-3 rounded-full border border-white/90 shadow-sm"
+                  style={{ backgroundColor: color }}
+                />
+              ))}
+            </div>
+            <div className="text-left hidden md:block">
+              <div className="text-xs font-bold text-slate-800 leading-tight">
+                {activeThemeObj?.name || 'Pastel Dream'}
+              </div>
+              <div className="text-[9px] uppercase font-bold text-tropical-coral tracking-wider">
+                Theme
+              </div>
+            </div>
+            <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform ${showThemeDropdown ? 'rotate-180' : ''}`} />
+          </button>
+
+          {/* Theme Dropdown Menu */}
+          {showThemeDropdown && (
+            <div className="absolute top-full mt-2 right-0 w-64 p-2 rounded-2xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-2xl border border-white/80 dark:border-slate-700 shadow-2xl z-50 space-y-1 animate-fade-in">
+              <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Atmosphere & Lighting
+              </div>
+              {THEMES.map((th) => (
+                <button
+                  key={th.id}
+                  onClick={() => {
+                    worldStore.setTheme(th.id);
+                    setShowThemeDropdown(false);
+                  }}
+                  className={`w-full p-2 rounded-xl flex items-center justify-between text-left transition ${
+                    activeThemeObj?.id === th.id
+                      ? 'bg-tropical-coral/15 border border-tropical-coral/30'
+                      : 'hover:bg-black/5 dark:hover:bg-white/5'
+                  }`}
+                >
+                  <div className="flex items-center space-x-2.5">
+                    <div className="flex items-center -space-x-1 flex-shrink-0">
+                      {th.preview?.map((c, i) => (
+                        <span
+                          key={i}
+                          className="w-3.5 h-3.5 rounded-full border border-white/80 shadow-sm"
+                          style={{ backgroundColor: c }}
+                        />
+                      ))}
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-slate-800 dark:text-white">
+                        {th.name}
+                      </div>
+                      <div className="text-[10px] text-slate-400">
+                        {th.subtitle}
+                      </div>
+                    </div>
+                  </div>
+                  {activeThemeObj?.id === th.id && (
+                    <Check className="w-4 h-4 text-tropical-coral flex-shrink-0" />
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Persistence Vault (Save & Load World) */}
+        <button
+          onClick={() => worldStore.toggleSaveLoadModal()}
+          className="tropical-glass px-3 py-1.5 rounded-2xl flex items-center space-x-1.5 pointer-events-auto border border-white/80 shadow-tropical-md transition hover:scale-105 bg-white/80 text-slate-800"
+          title="Save & Load World (Cloud & Local JSON)"
+        >
+          <Cloud className="w-3.5 h-3.5 text-cyan-600" />
+          <span className="text-xs font-bold hidden md:inline">Save / Load</span>
+        </button>
+
+        {/* Game Settings Modal Button */}
+        <button
+          onClick={() => worldStore.toggleSettingsModal()}
+          className="tropical-glass px-3 py-1.5 rounded-2xl flex items-center space-x-1.5 pointer-events-auto border border-white/80 shadow-tropical-md transition hover:scale-105 bg-white/80 text-slate-800"
+          title="Game Settings: Sound, Sensitivity, and Controls"
+        >
+          <Settings className="w-3.5 h-3.5 text-emerald-600" />
+          <span className="text-xs font-bold hidden md:inline">Settings</span>
         </button>
 
         {/* Action Controls */}

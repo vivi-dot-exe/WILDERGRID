@@ -1,431 +1,870 @@
-import React, { useRef, useEffect, useState } from 'react';
-import { BODY_FORMS } from '../types/avatar';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
+import * as THREE from 'three';
+import { BODY_FORMS, THEMES } from '../types/avatar';
+import { RotateCcw, ZoomIn, ZoomOut, Play, Pause } from 'lucide-react';
 
 export default function AvatarCanvas({ config, width = 340, height = 440 }) {
-  const canvasRef = useRef(null);
-  const isDraggingRef = useRef(false);
-  const lastMouseXRef = useRef(0);
-  const [yaw, setYaw] = useState(0.35); // Initial angled view
+  const containerRef = useRef(null);
+  const engineRef = useRef({
+    scene: null,
+    camera: null,
+    renderer: null,
+    mannequinGroup: null,
+    pedestalMesh: null,
+    ringLightMesh: null,
+    dirLight: null,
+    hemiLight: null,
+    pedestalLight: null,
+    animId: null,
+    yaw: 0.35,
+    targetYaw: 0.35,
+    pitch: 0.15,
+    targetPitch: 0.15,
+    distance: 4.6,
+    targetDistance: 4.6,
+    isDragging: false,
+    lastX: 0,
+    lastY: 0,
+    isAutoRotating: false,
+    tick: 0,
+  });
 
-  // Handle Drag to Rotate
-  const handleMouseDown = (e) => {
-    isDraggingRef.current = true;
-    lastMouseXRef.current = e.clientX;
-  };
+  const [autoRotate, setAutoRotate] = useState(false);
 
-  const handleMouseMove = (e) => {
-    if (!isDraggingRef.current) return;
-    const deltaX = e.clientX - lastMouseXRef.current;
-    lastMouseXRef.current = e.clientX;
-    setYaw((prev) => prev + deltaX * 0.012);
-  };
+  // Helper to build the 3D Lego Mannequin
+  const buildMannequin = useCallback((scene, cfg) => {
+    // If existing mannequin exists, remove and dispose
+    if (engineRef.current.mannequinGroup) {
+      scene.remove(engineRef.current.mannequinGroup);
+      engineRef.current.mannequinGroup.traverse((child) => {
+        if (child.isMesh) {
+          child.geometry?.dispose();
+          if (Array.isArray(child.material)) {
+            child.material.forEach((m) => m.dispose());
+          } else {
+            child.material?.dispose();
+          }
+        }
+      });
+      engineRef.current.mannequinGroup = null;
+    }
 
-  const handleMouseUp = () => {
-    isDraggingRef.current = false;
-  };
+    const group = new THREE.Group();
+    group.name = 'mannequin';
 
-  useEffect(() => {
-    window.addEventListener('mouseup', handleMouseUp);
-    return () => window.removeEventListener('mouseup', handleMouseUp);
+    // Proportions
+    const bodyForm = BODY_FORMS.find((b) => b.id === cfg.bodyForm) || BODY_FORMS[2];
+    const {
+      torsoWidth = 1.0,
+      torsoHeight = 1.0,
+      shoulderWidth = 1.0,
+      waistScale = 1.0,
+      legHeight = 1.0,
+      armWidth = 1.0,
+    } = bodyForm;
+
+    // Materials with PBR Lego plastic sheen
+    const skinMat = new THREE.MeshStandardMaterial({
+      color: cfg.skinTone || '#e0ac69',
+      roughness: 0.35,
+      metalness: 0.05,
+    });
+
+    const topMat = new THREE.MeshStandardMaterial({
+      color: cfg.topColor || '#ff8da1',
+      roughness: 0.3,
+      metalness: 0.08,
+    });
+
+    const bottomMat = new THREE.MeshStandardMaterial({
+      color: cfg.bottomColor || '#ffffff',
+      roughness: 0.4,
+      metalness: 0.05,
+    });
+
+    const shoeMat = new THREE.MeshStandardMaterial({
+      color: cfg.shoeColor || '#ffd166',
+      roughness: 0.3,
+      metalness: 0.05,
+    });
+
+    const hairMat = new THREE.MeshStandardMaterial({
+      color: cfg.hairColor || '#3e2723',
+      roughness: 0.45,
+      metalness: 0.1,
+    });
+
+    const studMat = new THREE.MeshStandardMaterial({
+      color: cfg.skinTone || '#e0ac69',
+      roughness: 0.3,
+      metalness: 0.05,
+    });
+
+    // Helper for Lego Studs
+    const createStud = (radius = 0.08, height = 0.05, mat = studMat) => {
+      const geom = new THREE.CylinderGeometry(radius, radius, height, 16);
+      const mesh = new THREE.Mesh(geom, mat);
+      mesh.castShadow = true;
+      return mesh;
+    };
+
+    // 1. FEET & SHOES
+    const shoeGroup = new THREE.Group();
+    shoeGroup.name = 'shoes';
+    const legSpacing = 0.22;
+    const footY = 0.1;
+
+    const createShoeMesh = (isLeft) => {
+      const sg = new THREE.Group();
+      const baseShoe = new THREE.Mesh(
+        new THREE.BoxGeometry(0.2, 0.16, 0.32),
+        shoeMat
+      );
+      baseShoe.position.set(0, 0.08, 0.03);
+      baseShoe.castShadow = true;
+      sg.add(baseShoe);
+
+      // Sneaker sole / toe cap
+      const sole = new THREE.Mesh(
+        new THREE.BoxGeometry(0.21, 0.05, 0.34),
+        new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.3 })
+      );
+      sole.position.set(0, 0.025, 0.03);
+      sole.castShadow = true;
+      sg.add(sole);
+
+      // Lego studs on top of shoe toe
+      const toeStud = createStud(0.045, 0.03, shoeMat);
+      toeStud.position.set(0, 0.17, 0.12);
+      sg.add(toeStud);
+
+      sg.position.set(isLeft ? -legSpacing : legSpacing, 0, 0);
+      return sg;
+    };
+
+    const leftShoe = createShoeMesh(true);
+    const rightShoe = createShoeMesh(false);
+    shoeGroup.add(leftShoe);
+    shoeGroup.add(rightShoe);
+    group.add(shoeGroup);
+
+    // 2. LEGS & BOTTOMS
+    const legsGroup = new THREE.Group();
+    legsGroup.name = 'legs';
+    const legH = 0.65 * legHeight;
+    const legW = 0.19;
+    const legD = 0.22;
+    const legCenterY = footY + 0.12 + legH / 2;
+
+    const leftLegGeom = new THREE.BoxGeometry(legW, legH, legD);
+    const leftLeg = new THREE.Mesh(leftLegGeom, bottomMat);
+    leftLeg.position.set(-legSpacing, legCenterY, 0);
+    leftLeg.castShadow = true;
+    legsGroup.add(leftLeg);
+
+    const rightLegGeom = new THREE.BoxGeometry(legW, legH, legD);
+    const rightLeg = new THREE.Mesh(rightLegGeom, bottomMat);
+    rightLeg.position.set(legSpacing, legCenterY, 0);
+    rightLeg.castShadow = true;
+    legsGroup.add(rightLeg);
+
+    // Hip Pelvis Block
+    const hipW = (legSpacing * 2) + legW;
+    const hipH = 0.14;
+    const hipGeom = new THREE.BoxGeometry(hipW, hipH, legD + 0.01);
+    const hipMesh = new THREE.Mesh(hipGeom, bottomMat);
+    hipMesh.position.set(0, legCenterY + legH / 2 + hipH / 2 - 0.02, 0);
+    hipMesh.castShadow = true;
+    legsGroup.add(hipMesh);
+
+    group.add(legsGroup);
+
+    // 3. TORSO & UPPER BODY
+    const upperBodyGroup = new THREE.Group();
+    upperBodyGroup.name = 'upperBody';
+
+    const tw = 0.58 * torsoWidth * shoulderWidth;
+    const th = 0.68 * torsoHeight;
+    const td = 0.32 * torsoWidth;
+    const torsoY = hipMesh.position.y + hipH / 2 + th / 2;
+
+    // Trapezoidal Torso shape (Lego style, tapered towards shoulders or waist)
+    const torsoGeom = new THREE.BoxGeometry(tw, th, td);
+    // Subtle waist taper if feminine/slender
+    const posAttr = torsoGeom.attributes.position;
+    for (let i = 0; i < posAttr.count; i++) {
+      const y = posAttr.getY(i);
+      if (y < 0 && waistScale !== 1.0) {
+        posAttr.setX(i, posAttr.getX(i) * waistScale);
+      }
+    }
+    torsoGeom.computeVertexNormals();
+
+    const torsoMesh = new THREE.Mesh(torsoGeom, topMat);
+    torsoMesh.position.set(0, torsoY, 0);
+    torsoMesh.castShadow = true;
+    upperBodyGroup.add(torsoMesh);
+
+    // Collar / Resort Shirt Detail
+    if (cfg.topStyle === 'resort_shirt') {
+      const collar = new THREE.Mesh(
+        new THREE.BoxGeometry(0.24, 0.12, 0.04),
+        new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.3 })
+      );
+      collar.position.set(0, torsoY + th / 3, td / 2 + 0.01);
+      upperBodyGroup.add(collar);
+    } else if (cfg.topStyle === 'hoodie') {
+      // Hood pouch on front
+      const pouch = new THREE.Mesh(
+        new THREE.BoxGeometry(0.36, 0.18, 0.05),
+        new THREE.MeshStandardMaterial({
+          color: cfg.topColor || '#ff6b8b',
+          roughness: 0.4,
+        })
+      );
+      pouch.position.set(0, torsoY - 0.12, td / 2 + 0.02);
+      upperBodyGroup.add(pouch);
+    }
+
+    // 4. ARMS & SLEEVES
+    const armW = 0.16 * armWidth;
+    const armH = 0.58 * torsoHeight;
+    const armD = 0.16 * armWidth;
+    const armY = torsoY + 0.04;
+    const armOffset = tw / 2 + armW / 2 + 0.02;
+
+    const createArm = (isLeft) => {
+      const ag = new THREE.Group();
+      // Shoulder Joint
+      const shoulderJoint = new THREE.Mesh(
+        new THREE.SphereGeometry(armW / 2 + 0.01, 16, 16),
+        topMat
+      );
+      shoulderJoint.position.set(0, armH / 2, 0);
+      ag.add(shoulderJoint);
+
+      // Arm Sleeve
+      const armMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(armW, armH, armD),
+        topMat
+      );
+      armMesh.castShadow = true;
+      ag.add(armMesh);
+
+      // Lego Hand (C-shape curved cuff & palm)
+      const handGroup = new THREE.Group();
+      const cuffGeom = new THREE.CylinderGeometry(0.065, 0.07, 0.08, 16);
+      const cuff = new THREE.Mesh(cuffGeom, skinMat);
+      cuff.position.set(0, -armH / 2 - 0.04, 0);
+      handGroup.add(cuff);
+
+      const palmGeom = new THREE.TorusGeometry(0.06, 0.025, 8, 16, Math.PI * 1.3);
+      const palm = new THREE.Mesh(palmGeom, skinMat);
+      palm.rotation.z = isLeft ? Math.PI / 2 : -Math.PI / 2;
+      palm.rotation.x = Math.PI / 2;
+      palm.position.set(0, -armH / 2 - 0.1, 0.01);
+      handGroup.add(palm);
+
+      ag.add(handGroup);
+      ag.position.set(isLeft ? -armOffset : armOffset, armY, 0);
+      return ag;
+    };
+
+    const leftArm = createArm(true);
+    leftArm.name = 'leftArm';
+    const rightArm = createArm(false);
+    rightArm.name = 'rightArm';
+    upperBodyGroup.add(leftArm);
+    upperBodyGroup.add(rightArm);
+
+    // 5. NECK & HEAD
+    const neckGeom = new THREE.CylinderGeometry(0.1, 0.1, 0.1, 16);
+    const neckMesh = new THREE.Mesh(neckGeom, skinMat);
+    neckMesh.position.set(0, torsoY + th / 2 + 0.05, 0);
+    upperBodyGroup.add(neckMesh);
+
+    const headGroup = new THREE.Group();
+    headGroup.name = 'head';
+    const headSize = 0.48;
+    const headY = neckMesh.position.y + 0.05 + headSize / 2;
+    headGroup.position.set(0, headY, 0);
+
+    // Cylindrical / rounded block Lego Head
+    const headGeom = new THREE.CylinderGeometry(headSize * 0.48, headSize * 0.48, headSize, 24);
+    const headMesh = new THREE.Mesh(headGeom, skinMat);
+    headMesh.castShadow = true;
+    headGroup.add(headMesh);
+
+    // Iconic Lego Head Top Stud
+    const headStud = createStud(0.12, 0.09, studMat);
+    headStud.position.set(0, headSize / 2 + 0.045, 0);
+    headGroup.add(headStud);
+
+    // Face Decal / Dynamic Canvas Texture for Eyes & Expression
+    const faceCanvas = document.createElement('canvas');
+    faceCanvas.width = 256;
+    faceCanvas.height = 256;
+    const fctx = faceCanvas.getContext('2d');
+    fctx.clearRect(0, 0, 256, 256);
+
+    // Cute Eyes
+    const eyeSpacing = 44;
+    const eyeY = 122;
+
+    // White eye background + glints
+    fctx.fillStyle = '#18181b';
+    fctx.beginPath();
+    fctx.arc(128 - eyeSpacing, eyeY, 14, 0, Math.PI * 2);
+    fctx.arc(128 + eyeSpacing, eyeY, 14, 0, Math.PI * 2);
+    fctx.fill();
+
+    // Glint
+    fctx.fillStyle = '#ffffff';
+    fctx.beginPath();
+    fctx.arc(128 - eyeSpacing + 4, eyeY - 4, 5, 0, Math.PI * 2);
+    fctx.arc(128 + eyeSpacing + 4, eyeY - 4, 5, 0, Math.PI * 2);
+    fctx.arc(128 - eyeSpacing - 4, eyeY + 4, 2.5, 0, Math.PI * 2);
+    fctx.arc(128 + eyeSpacing - 4, eyeY + 4, 2.5, 0, Math.PI * 2);
+    fctx.fill();
+
+    // Rosy Cheeks
+    fctx.fillStyle = 'rgba(255, 107, 139, 0.45)';
+    fctx.beginPath();
+    fctx.arc(128 - eyeSpacing - 14, eyeY + 22, 16, 0, Math.PI * 2);
+    fctx.arc(128 + eyeSpacing + 14, eyeY + 22, 16, 0, Math.PI * 2);
+    fctx.fill();
+
+    // Cheerful Smile
+    fctx.strokeStyle = '#2d1810';
+    fctx.lineWidth = 5;
+    fctx.lineCap = 'round';
+    fctx.beginPath();
+    fctx.arc(128, eyeY + 26, 18, 0.15 * Math.PI, 0.85 * Math.PI);
+    fctx.stroke();
+
+    const faceTexture = new THREE.CanvasTexture(faceCanvas);
+    faceTexture.anisotropy = 4;
+    const facePlane = new THREE.Mesh(
+      new THREE.PlaneGeometry(headSize * 0.85, headSize * 0.85),
+      new THREE.MeshBasicMaterial({
+        map: faceTexture,
+        transparent: true,
+        depthWrite: false,
+      })
+    );
+    facePlane.position.set(0, 0, headSize * 0.48 + 0.005);
+    headGroup.add(facePlane);
+
+    // 6. HAIR STYLES
+    const hairGroup = new THREE.Group();
+    hairGroup.name = 'hair';
+    const hs = cfg.hairStyle || 'curls';
+
+    if (hs === 'afro' || hs === 'curls') {
+      const radius = hs === 'afro' ? headSize * 0.65 : headSize * 0.58;
+      const sphereCount = hs === 'afro' ? 14 : 10;
+      for (let i = 0; i < sphereCount; i++) {
+        const angle = (i / sphereCount) * Math.PI * 2;
+        const puff = new THREE.Mesh(
+          new THREE.SphereGeometry(radius * 0.38, 12, 12),
+          hairMat
+        );
+        puff.position.set(
+          Math.cos(angle) * (radius * 0.6),
+          headSize * 0.35 + Math.sin(i * 2.5) * 0.05,
+          Math.sin(angle) * (radius * 0.6) - 0.02
+        );
+        puff.castShadow = true;
+        hairGroup.add(puff);
+      }
+      const topPuff = new THREE.Mesh(
+        new THREE.SphereGeometry(radius * 0.5, 14, 14),
+        hairMat
+      );
+      topPuff.position.set(0, headSize * 0.5, -0.04);
+      topPuff.castShadow = true;
+      hairGroup.add(topPuff);
+    } else if (hs === 'locs' || hs === 'braids') {
+      // Sculpted layered crown
+      const crown = new THREE.Mesh(
+        new THREE.CylinderGeometry(headSize * 0.52, headSize * 0.54, 0.22, 16),
+        hairMat
+      );
+      crown.position.set(0, headSize * 0.32, -0.03);
+      crown.castShadow = true;
+      hairGroup.add(crown);
+
+      // Hanging locs / braids
+      const strandCount = 10;
+      for (let i = 0; i < strandCount; i++) {
+        const a = (i / strandCount) * Math.PI * 1.5 - Math.PI * 0.75;
+        const strandH = hs === 'locs' ? 0.45 : 0.55;
+        const strand = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.032, 0.028, strandH, 8),
+          hairMat
+        );
+        strand.position.set(
+          Math.sin(a) * (headSize * 0.5 + 0.02),
+          0.05 - strandH / 2,
+          Math.cos(a) * (headSize * 0.5 + 0.02) - 0.06
+        );
+        strand.rotation.x = 0.1;
+        strand.castShadow = true;
+        hairGroup.add(strand);
+      }
+    } else if (hs === 'bob') {
+      // Sleek chin-length curved helmet
+      const bobCap = new THREE.Mesh(
+        new THREE.SphereGeometry(headSize * 0.56, 18, 18, 0, Math.PI * 2, 0, Math.PI * 0.65),
+        hairMat
+      );
+      bobCap.position.set(0, headSize * 0.1, -0.02);
+      bobCap.rotation.x = -0.15;
+      bobCap.castShadow = true;
+      hairGroup.add(bobCap);
+
+      const sideL = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.38, 0.32), hairMat);
+      sideL.position.set(-headSize * 0.45, 0.05, 0);
+      sideL.castShadow = true;
+      hairGroup.add(sideL);
+
+      const sideR = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.38, 0.32), hairMat);
+      sideR.position.set(headSize * 0.45, 0.05, 0);
+      sideR.castShadow = true;
+      hairGroup.add(sideR);
+    } else if (hs === 'long_flowy') {
+      // Cascading locks
+      const crown = new THREE.Mesh(
+        new THREE.SphereGeometry(headSize * 0.54, 16, 16, 0, Math.PI * 2, 0, Math.PI * 0.55),
+        hairMat
+      );
+      crown.position.set(0, headSize * 0.12, -0.02);
+      crown.castShadow = true;
+      hairGroup.add(crown);
+
+      // Back cape of hair
+      const backHair = new THREE.Mesh(
+        new THREE.BoxGeometry(headSize * 0.95, 0.72, 0.14),
+        hairMat
+      );
+      backHair.position.set(0, -0.12, -headSize * 0.46);
+      backHair.castShadow = true;
+      hairGroup.add(backHair);
+
+      // Front curls
+      const frontL = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.035, 0.55, 8), hairMat);
+      frontL.position.set(-headSize * 0.42, -0.06, headSize * 0.2);
+      frontL.castShadow = true;
+      hairGroup.add(frontL);
+
+      const frontR = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.035, 0.55, 8), hairMat);
+      frontR.position.set(headSize * 0.42, -0.06, headSize * 0.2);
+      frontR.castShadow = true;
+      hairGroup.add(frontR);
+    } else if (hs === 'fade') {
+      // Clean modern fade
+      const topCap = new THREE.Mesh(
+        new THREE.BoxGeometry(headSize * 0.95, 0.14, headSize * 0.95),
+        hairMat
+      );
+      topCap.position.set(0, headSize * 0.48, 0);
+      topCap.castShadow = true;
+      hairGroup.add(topCap);
+
+      const fadeRing = new THREE.Mesh(
+        new THREE.CylinderGeometry(headSize * 0.49, headSize * 0.49, 0.16, 24),
+        new THREE.MeshStandardMaterial({
+          color: cfg.hairColor || '#3e2723',
+          roughness: 0.6,
+        })
+      );
+      fadeRing.position.set(0, headSize * 0.35, 0);
+      hairGroup.add(fadeRing);
+    } else {
+      // Pixie Crop
+      const pixieMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(headSize * 0.52, 16, 16, 0, Math.PI * 2, 0, Math.PI * 0.52),
+        hairMat
+      );
+      pixieMesh.position.set(0, headSize * 0.22, 0);
+      pixieMesh.castShadow = true;
+      hairGroup.add(pixieMesh);
+    }
+
+    headGroup.add(hairGroup);
+
+    // 7. ACCESSORIES: HATS & GLASSES
+    const acc = cfg.accessory;
+    if (acc === 'sun_cap') {
+      const capGroup = new THREE.Group();
+      const dome = new THREE.Mesh(
+        new THREE.SphereGeometry(headSize * 0.55, 18, 18, 0, Math.PI * 2, 0, Math.PI * 0.45),
+        new THREE.MeshStandardMaterial({ color: '#ff6b8b', roughness: 0.35 })
+      );
+      dome.position.set(0, headSize * 0.28, 0);
+      capGroup.add(dome);
+
+      // Visor brim
+      const visor = new THREE.Mesh(
+        new THREE.BoxGeometry(headSize * 0.75, 0.035, 0.26),
+        new THREE.MeshStandardMaterial({ color: '#ff8da1', roughness: 0.35 })
+      );
+      visor.position.set(0, headSize * 0.22, headSize * 0.5);
+      visor.rotation.x = 0.15;
+      capGroup.add(visor);
+      headGroup.add(capGroup);
+    } else if (acc === 'beanie') {
+      const beanie = new THREE.Mesh(
+        new THREE.CylinderGeometry(headSize * 0.54, headSize * 0.56, 0.32, 20),
+        new THREE.MeshStandardMaterial({ color: '#ffd166', roughness: 0.5 })
+      );
+      beanie.position.set(0, headSize * 0.4, -0.01);
+      headGroup.add(beanie);
+    } else if (acc === 'sunglasses') {
+      const sgGroup = new THREE.Group();
+      const lensMat = new THREE.MeshStandardMaterial({
+        color: '#0f172a',
+        roughness: 0.1,
+        metalness: 0.8,
+      });
+      const frameMat = new THREE.MeshStandardMaterial({
+        color: '#ffd166',
+        roughness: 0.2,
+        metalness: 0.6,
+      });
+
+      const leftLens = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.09, 0.04), lensMat);
+      leftLens.position.set(-0.11, 0.02, headSize * 0.5 + 0.02);
+      const rightLens = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.09, 0.04), lensMat);
+      rightLens.position.set(0.11, 0.02, headSize * 0.5 + 0.02);
+
+      const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.025, 0.04), frameMat);
+      bridge.position.set(0, 0.035, headSize * 0.5 + 0.02);
+
+      sgGroup.add(leftLens);
+      sgGroup.add(rightLens);
+      sgGroup.add(bridge);
+      headGroup.add(sgGroup);
+    } else if (acc === 'glasses') {
+      const gGroup = new THREE.Group();
+      const wireMat = new THREE.MeshStandardMaterial({
+        color: '#ffd166',
+        roughness: 0.2,
+        metalness: 0.8,
+      });
+
+      const leftRing = new THREE.Mesh(new THREE.TorusGeometry(0.065, 0.012, 8, 20), wireMat);
+      leftRing.position.set(-0.11, 0.02, headSize * 0.5 + 0.01);
+      const rightRing = new THREE.Mesh(new THREE.TorusGeometry(0.065, 0.012, 8, 20), wireMat);
+      rightRing.position.set(0.11, 0.02, headSize * 0.5 + 0.01);
+
+      const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.015, 0.02), wireMat);
+      bridge.position.set(0, 0.035, headSize * 0.5 + 0.01);
+
+      gGroup.add(leftRing);
+      gGroup.add(rightRing);
+      gGroup.add(bridge);
+      headGroup.add(gGroup);
+    }
+
+    upperBodyGroup.add(headGroup);
+    group.add(upperBodyGroup);
+
+    // Center pivot point
+    group.position.y = -1.15;
+    scene.add(group);
+    engineRef.current.mannequinGroup = group;
   }, []);
 
+  // Update theme lighting & pedestal
+  const applyTheme = useCallback((themeId) => {
+    const themeObj = THEMES.find((t) => t.id === themeId) || THEMES[0];
+    const { pedestalMesh, ringLightMesh, dirLight, hemiLight, pedestalLight } = engineRef.current;
+
+    if (pedestalMesh) {
+      pedestalMesh.material.color.set(themeObj.modalTheme.pedestalColor);
+    }
+    if (ringLightMesh) {
+      ringLightMesh.material.color.set(themeObj.modalTheme.accentColor);
+    }
+    if (pedestalLight) {
+      pedestalLight.color.set(themeObj.modalTheme.accentColor);
+    }
+    if (dirLight) {
+      dirLight.color.set(themeObj.modalTheme.ambientColor);
+    }
+  }, []);
+
+  // Initialize Three.js WebGL Studio
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    let animationFrameId;
-    let tick = 0;
+    const container = containerRef.current;
+    if (!container) return;
 
-    const dpr = window.devicePixelRatio || 1;
-    if (canvas.width !== width * dpr || canvas.height !== height * dpr) {
-      canvas.width = width * dpr;
-      canvas.height = height * dpr;
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(38, width / height, 0.1, 100);
+    camera.position.set(0, 0.1, engineRef.current.distance);
+
+    const renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      alpha: true,
+      powerPreference: 'high-performance',
+    });
+    renderer.setSize(width, height);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.1;
+
+    container.appendChild(renderer.domElement);
+
+    // Studio Lighting
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0xbde9ff, 0.85);
+    scene.add(hemiLight);
+
+    const dirLight = new THREE.DirectionalLight(0xfff5ea, 1.3);
+    dirLight.position.set(4, 8, 6);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 1024;
+    dirLight.shadow.mapSize.height = 1024;
+    dirLight.shadow.bias = -0.001;
+    scene.add(dirLight);
+
+    const backLight = new THREE.DirectionalLight(0x80e5ff, 0.6);
+    backLight.position.set(-4, 3, -4);
+    scene.add(backLight);
+
+    const pedestalLight = new THREE.PointLight(0xff6b8b, 1.2, 4);
+    pedestalLight.position.set(0, -1.0, 0.8);
+    scene.add(pedestalLight);
+
+    // 1. Studio Pedestal Base (Glowing round Lego baseplate)
+    const pedestalGroup = new THREE.Group();
+    const pedGeom = new THREE.CylinderGeometry(1.35, 1.45, 0.15, 32);
+    const pedMat = new THREE.MeshStandardMaterial({
+      color: '#ff8da1',
+      roughness: 0.25,
+      metalness: 0.1,
+    });
+    const pedestalMesh = new THREE.Mesh(pedGeom, pedMat);
+    pedestalMesh.position.y = -1.22;
+    pedestalMesh.receiveShadow = true;
+    pedestalGroup.add(pedestalMesh);
+
+    // Top studs circle on pedestal
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      const studGeom = new THREE.CylinderGeometry(0.065, 0.065, 0.04, 16);
+      const stud = new THREE.Mesh(studGeom, pedMat);
+      stud.position.set(Math.cos(a) * 1.05, -1.12, Math.sin(a) * 1.05);
+      stud.receiveShadow = true;
+      stud.castShadow = true;
+      pedestalGroup.add(stud);
     }
 
-    // Retrieve body form metrics
-    const formConfig = BODY_FORMS.find((b) => b.id === config.bodyForm) || BODY_FORMS[2];
-    const { torsoWidth, torsoHeight, shoulderWidth, legHeight } = formConfig;
+    // Glowing rim
+    const ringGeom = new THREE.TorusGeometry(1.42, 0.025, 16, 48);
+    const ringMat = new THREE.MeshBasicMaterial({ color: '#ff6b8b' });
+    const ringLightMesh = new THREE.Mesh(ringGeom, ringMat);
+    ringLightMesh.rotation.x = Math.PI / 2;
+    ringLightMesh.position.y = -1.16;
+    pedestalGroup.add(ringLightMesh);
 
-    // Helper: 3D Projection math (Orthographic rotated around Y axis)
-    const project3D = (x, y, z, originX, originY, scale = 1.35) => {
-      // Rotate around Y axis by yaw
-      const cosY = Math.cos(yaw);
-      const sinY = Math.sin(yaw);
+    scene.add(pedestalGroup);
 
-      const rotX = x * cosY - z * sinY;
-      const rotZ = x * sinY + z * cosY;
+    // Save refs
+    engineRef.current.scene = scene;
+    engineRef.current.camera = camera;
+    engineRef.current.renderer = renderer;
+    engineRef.current.pedestalMesh = pedestalMesh;
+    engineRef.current.ringLightMesh = ringLightMesh;
+    engineRef.current.dirLight = dirLight;
+    engineRef.current.hemiLight = hemiLight;
+    engineRef.current.pedestalLight = pedestalLight;
 
-      // Isometric tilt (angle around X axis)
-      const pitch = 0.22;
-      const cosP = Math.cos(pitch);
-      const sinP = Math.sin(pitch);
+    // Initial Mannequin Build
+    buildMannequin(scene, config);
+    applyTheme(config.theme || 'pastel_dream');
 
-      const projX = originX + rotX * scale;
-      const projY = originY + (y * cosP + rotZ * sinP) * scale;
-      const depth = rotZ; // For z-sorting if needed
+    // Animation Render Loop
+    let animId;
+    const animate = () => {
+      animId = requestAnimationFrame(animate);
+      engineRef.current.tick += 1;
+      const { tick, isAutoRotating } = engineRef.current;
 
-      return { x: projX, y: projY, depth, rotX, rotZ };
+      // Auto-rotate if toggled
+      if (isAutoRotating) {
+        engineRef.current.targetYaw += 0.012;
+      }
+
+      // Smooth damping lerp for yaw & pitch
+      engineRef.current.yaw += (engineRef.current.targetYaw - engineRef.current.yaw) * 0.12;
+      engineRef.current.pitch += (engineRef.current.targetPitch - engineRef.current.pitch) * 0.12;
+      engineRef.current.distance += (engineRef.current.targetDistance - engineRef.current.distance) * 0.12;
+
+      const { yaw, pitch, distance } = engineRef.current;
+
+      // Camera orbital position
+      const cy = Math.sin(pitch) * distance;
+      const horizDist = Math.cos(pitch) * distance;
+      const cx = Math.sin(yaw) * horizDist;
+      const cz = Math.cos(yaw) * horizDist;
+
+      camera.position.set(cx, cy - 0.1, cz);
+      camera.lookAt(0, -0.15, 0);
+
+      // Subtle breathing idle sway
+      const mannequin = engineRef.current.mannequinGroup;
+      if (mannequin) {
+        const breathe = Math.sin(tick * 0.045) * 0.015;
+        const upper = mannequin.getObjectByName('upperBody');
+        if (upper) {
+          upper.position.y = breathe;
+        }
+        const leftArm = mannequin.getObjectByName('leftArm');
+        const rightArm = mannequin.getObjectByName('rightArm');
+        if (leftArm) leftArm.rotation.x = Math.sin(tick * 0.045) * 0.05;
+        if (rightArm) rightArm.rotation.x = -Math.sin(tick * 0.045) * 0.05;
+      }
+
+      renderer.render(scene, camera);
     };
 
-    // Helper: Draw 3D Box/Cube with directional lighting
-    const drawBox = (cx, cy, cz, w, h, d, color, originX, originY, scale = 1.35, cornerRadius = 0) => {
-      const hw = w / 2;
-      const hh = h / 2;
-      const hd = d / 2;
+    animate();
+    engineRef.current.animId = animId;
 
-      // 8 corners of the box
-      const corners = [
-        project3D(cx - hw, cy - hh, cz - hd, originX, originY, scale), // 0: left top back
-        project3D(cx + hw, cy - hh, cz - hd, originX, originY, scale), // 1: right top back
-        project3D(cx + hw, cy - hh, cz + hd, originX, originY, scale), // 2: right top front
-        project3D(cx - hw, cy - hh, cz + hd, originX, originY, scale), // 3: left top front
-        project3D(cx - hw, cy + hh, cz - hd, originX, originY, scale), // 4: left btm back
-        project3D(cx + hw, cy + hh, cz - hd, originX, originY, scale), // 5: right btm back
-        project3D(cx + hw, cy + hh, cz + hd, originX, originY, scale), // 6: right btm front
-        project3D(cx - hw, cy + hh, cz + hd, originX, originY, scale), // 7: left btm front
-      ];
-
-      // Lighting normals based on yaw
-      const cosY = Math.cos(yaw);
-      const sinY = Math.sin(yaw);
-
-      // Top face (always visible)
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.moveTo(corners[0].x, corners[0].y);
-      ctx.lineTo(corners[1].x, corners[1].y);
-      ctx.lineTo(corners[2].x, corners[2].y);
-      ctx.lineTo(corners[3].x, corners[3].y);
-      ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-
-      // Front Face (+Z)
-      if (cosY > -0.15) {
-        ctx.fillStyle = shadeColor(color, -10);
-        ctx.beginPath();
-        ctx.moveTo(corners[3].x, corners[3].y);
-        ctx.lineTo(corners[2].x, corners[2].y);
-        ctx.lineTo(corners[6].x, corners[6].y);
-        ctx.lineTo(corners[7].x, corners[7].y);
-        ctx.closePath();
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.08)';
-        ctx.stroke();
-      }
-
-      // Right Face (+X)
-      if (sinY > -0.15) {
-        ctx.fillStyle = shadeColor(color, -25);
-        ctx.beginPath();
-        ctx.moveTo(corners[2].x, corners[2].y);
-        ctx.lineTo(corners[1].x, corners[1].y);
-        ctx.lineTo(corners[5].x, corners[5].y);
-        ctx.lineTo(corners[6].x, corners[6].y);
-        ctx.closePath();
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.1)';
-        ctx.stroke();
-      }
-
-      // Left Face (-X)
-      if (sinY < 0.15) {
-        ctx.fillStyle = shadeColor(color, -18);
-        ctx.beginPath();
-        ctx.moveTo(corners[0].x, corners[0].y);
-        ctx.lineTo(corners[3].x, corners[3].y);
-        ctx.lineTo(corners[7].x, corners[7].y);
-        ctx.lineTo(corners[4].x, corners[4].y);
-        ctx.closePath();
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.1)';
-        ctx.stroke();
-      }
-
-      // Back Face (-Z)
-      if (cosY < 0.15) {
-        ctx.fillStyle = shadeColor(color, -30);
-        ctx.beginPath();
-        ctx.moveTo(corners[1].x, corners[1].y);
-        ctx.lineTo(corners[0].x, corners[0].y);
-        ctx.lineTo(corners[4].x, corners[4].y);
-        ctx.lineTo(corners[5].x, corners[5].y);
-        ctx.closePath();
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.12)';
-        ctx.stroke();
+    return () => {
+      cancelAnimationFrame(animId);
+      renderer.dispose();
+      if (container.contains(renderer.domElement)) {
+        container.removeChild(renderer.domElement);
       }
     };
+  }, [width, height, buildMannequin, applyTheme]);
 
-    // Color lighting shader
-    function shadeColor(color, percent) {
-      if (!color || color.startsWith('rgba')) return color || '#ffffff';
-      let num = parseInt(color.replace('#', ''), 16);
-      if (isNaN(num)) return color;
-      let amt = Math.round(2.55 * percent);
-      let R = (num >> 16) + amt;
-      let B = ((num >> 8) & 0x00FF) + amt;
-      let G = (num & 0x0000FF) + amt;
-      return '#' + (0x1000000 + (R < 255 ? (R < 1 ? 0 : R) : 255) * 0x10000 + (B < 255 ? (B < 1 ? 0 : B) : 255) * 0x100 + (G < 255 ? (G < 1 ? 0 : G) : 255)).toString(16).slice(1);
+  // React to config updates live
+  useEffect(() => {
+    if (engineRef.current.scene) {
+      buildMannequin(engineRef.current.scene, config);
+      applyTheme(config.theme || 'pastel_dream');
     }
+  }, [config, buildMannequin, applyTheme]);
 
-    // Render loop
-    const render = () => {
-      tick += 1;
-      ctx.save();
-      ctx.scale(dpr, dpr);
-      ctx.clearRect(0, 0, width, height);
+  // Pointer drag interaction
+  const handlePointerDown = (e) => {
+    engineRef.current.isDragging = true;
+    engineRef.current.lastX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
+    engineRef.current.lastY = e.clientY || (e.touches && e.touches[0].clientY) || 0;
+  };
 
-      const originX = width / 2;
-      const originY = height / 2 + 35;
-      const scale = 1.6;
+  const handlePointerMove = (e) => {
+    if (!engineRef.current.isDragging) return;
+    const clientX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
+    const clientY = e.clientY || (e.touches && e.touches[0].clientY) || 0;
 
-      // Idle breathing offset
-      const breathe = Math.sin(tick * 0.04) * 2;
+    const deltaX = clientX - engineRef.current.lastX;
+    const deltaY = clientY - engineRef.current.lastY;
 
-      // 1. Pedestal Studio Circle
-      ctx.save();
-      const pedGrad = ctx.createRadialGradient(originX, originY + 125, 10, originX, originY + 125, 110);
-      pedGrad.addColorStop(0, 'rgba(255, 107, 139, 0.35)');
-      pedGrad.addColorStop(0.5, 'rgba(255, 209, 102, 0.2)');
-      pedGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-      ctx.fillStyle = pedGrad;
-      ctx.beginPath();
-      ctx.ellipse(originX, originY + 125, 95, 36, 0, 0, Math.PI * 2);
-      ctx.fill();
+    engineRef.current.lastX = clientX;
+    engineRef.current.lastY = clientY;
 
-      // Pedestal Ring
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.ellipse(originX, originY + 125, 75, 28, 0, 0, Math.PI * 2);
-      ctx.stroke();
+    engineRef.current.targetYaw += deltaX * 0.012;
+    // Clamp pitch
+    engineRef.current.targetPitch = Math.max(
+      -0.4,
+      Math.min(0.65, engineRef.current.targetPitch - deltaY * 0.008)
+    );
+  };
 
-      // Shadow below feet
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
-      ctx.beginPath();
-      ctx.ellipse(originX, originY + 123, 40, 15, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
+  const handlePointerUp = () => {
+    engineRef.current.isDragging = false;
+  };
 
-      // 2. SHOES & FEET
-      const shoeW = 16;
-      const shoeH = 14;
-      const shoeD = 22;
-      const legSpacing = 13;
-      const footY = 100 * legHeight;
-
-      // Left Shoe
-      drawBox(-legSpacing, footY, 2, shoeW, shoeH, shoeD, config.shoeColor, originX, originY, scale);
-      // Right Shoe
-      drawBox(legSpacing, footY, 2, shoeW, shoeH, shoeD, config.shoeColor, originX, originY, scale);
-
-      // 3. LEGS & BOTTOMS
-      const legW = 14;
-      const legH = 45 * legHeight;
-      const legD = 15;
-      const legCenterY = footY - shoeH / 2 - legH / 2;
-
-      // Left Leg
-      drawBox(-legSpacing, legCenterY, 0, legW, legH, legD, config.bottomColor, originX, originY, scale);
-      // Right Leg
-      drawBox(legSpacing, legCenterY, 0, legW, legH, legD, config.bottomColor, originX, originY, scale);
-
-      // 4. TORSO & TOP
-      const tw = 40 * torsoWidth * shoulderWidth;
-      const th = 48 * torsoHeight;
-      const td = 24 * torsoWidth;
-      const torsoY = legCenterY - legH / 2 - th / 2 + breathe;
-
-      drawBox(0, torsoY, 0, tw, th, td, config.topColor, originX, originY, scale);
-
-      // Collar / Button Detail on Top
-      if (config.topStyle === 'resort_shirt') {
-        const collar = project3D(0, torsoY - th / 3, td / 2 + 1, originX, originY, scale);
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath();
-        ctx.arc(collar.x, collar.y, 2 * scale, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      // 5. ARMS & SLEEVES
-      const armW = 11;
-      const armH = 42 * torsoHeight;
-      const armD = 12;
-      const armY = torsoY + 4;
-      const armOffset = tw / 2 + armW / 2 + 1;
-
-      // Left Arm
-      drawBox(-armOffset, armY, 0, armW, armH, armD, config.topColor, originX, originY, scale);
-      // Left Hand
-      drawBox(-armOffset, armY + armH / 2 + 4, 0, 9, 9, 9, config.skinTone, originX, originY, scale);
-
-      // Right Arm
-      drawBox(armOffset, armY, 0, armW, armH, armD, config.topColor, originX, originY, scale);
-      // Right Hand
-      drawBox(armOffset, armY + armH / 2 + 4, 0, 9, 9, 9, config.skinTone, originX, originY, scale);
-
-      // 6. HEAD & FACE
-      const headSize = 38;
-      const headY = torsoY - th / 2 - headSize / 2 - 2;
-
-      // Head Cube
-      drawBox(0, headY, 0, headSize, headSize, headSize, config.skinTone, originX, originY, scale);
-
-      // Facial Features (Only when facing forward-ish)
-      const cosY = Math.cos(yaw);
-      const sinY = Math.sin(yaw);
-      if (cosY > 0.1) {
-        // Face plane
-        const eyeSpacing = 7;
-        const eyeY = headY - 1;
-        const eyeZ = headSize / 2 + 1;
-
-        // Left Eye
-        const lEye = project3D(-eyeSpacing, eyeY, eyeZ, originX, originY, scale);
-        // Right Eye
-        const rEye = project3D(eyeSpacing, eyeY, eyeZ, originX, originY, scale);
-
-        // Blinking logic
-        const isBlinking = tick % 140 > 132;
-        ctx.fillStyle = '#18181b';
-        if (isBlinking) {
-          ctx.fillRect(lEye.x - 2.5 * scale, lEye.y, 5 * scale, 1.5 * scale);
-          ctx.fillRect(rEye.x - 2.5 * scale, rEye.y, 5 * scale, 1.5 * scale);
-        } else {
-          ctx.beginPath();
-          ctx.arc(lEye.x, lEye.y, 2.5 * scale, 0, Math.PI * 2);
-          ctx.arc(rEye.x, rEye.y, 2.5 * scale, 0, Math.PI * 2);
-          ctx.fill();
-
-          // Cute white eye glint
-          ctx.fillStyle = '#ffffff';
-          ctx.beginPath();
-          ctx.arc(lEye.x + 0.8 * scale, lEye.y - 0.8 * scale, 1 * scale, 0, Math.PI * 2);
-          ctx.arc(rEye.x + 0.8 * scale, rEye.y - 0.8 * scale, 1 * scale, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        // Rosy Cheeks
-        ctx.fillStyle = 'rgba(255, 107, 139, 0.4)';
-        const lCheek = project3D(-eyeSpacing - 3, eyeY + 5, eyeZ, originX, originY, scale);
-        const rCheek = project3D(eyeSpacing + 3, eyeY + 5, eyeZ, originX, originY, scale);
-        ctx.beginPath();
-        ctx.arc(lCheek.x, lCheek.y, 2.5 * scale, 0, Math.PI * 2);
-        ctx.arc(rCheek.x, rCheek.y, 2.5 * scale, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Smile
-        const mouth = project3D(0, eyeY + 6, eyeZ, originX, originY, scale);
-        ctx.strokeStyle = '#3e2723';
-        ctx.lineWidth = 1.5 * scale;
-        ctx.beginPath();
-        ctx.arc(mouth.x, mouth.y, 3 * scale, 0.1 * Math.PI, 0.9 * Math.PI);
-        ctx.stroke();
-
-        // Glasses Accessory
-        if (config.accessory === 'sunglasses') {
-          ctx.fillStyle = '#1e293b';
-          const glassL = project3D(-eyeSpacing, eyeY, eyeZ + 2, originX, originY, scale);
-          const glassR = project3D(eyeSpacing, eyeY, eyeZ + 2, originX, originY, scale);
-          ctx.fillRect(glassL.x - 5 * scale, glassL.y - 4 * scale, 9 * scale, 7 * scale);
-          ctx.fillRect(glassR.x - 4 * scale, glassR.y - 4 * scale, 9 * scale, 7 * scale);
-          // Bridge
-          ctx.strokeStyle = '#ffd166';
-          ctx.lineWidth = 2 * scale;
-          ctx.beginPath();
-          ctx.moveTo(glassL.x + 3 * scale, glassL.y);
-          ctx.lineTo(glassR.x - 3 * scale, glassR.y);
-          ctx.stroke();
-        } else if (config.accessory === 'glasses') {
-          ctx.strokeStyle = '#d4af37';
-          ctx.lineWidth = 1.5 * scale;
-          const glassL = project3D(-eyeSpacing, eyeY, eyeZ + 2, originX, originY, scale);
-          const glassR = project3D(eyeSpacing, eyeY, eyeZ + 2, originX, originY, scale);
-          ctx.beginPath();
-          ctx.arc(glassL.x, glassL.y, 4 * scale, 0, Math.PI * 2);
-          ctx.arc(glassR.x, glassR.y, 4 * scale, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(glassL.x + 4 * scale, glassL.y);
-          ctx.lineTo(glassR.x - 4 * scale, glassR.y);
-          ctx.stroke();
-        }
-      }
-
-      // 7. HAIR STYLES
-      const hairColor = config.hairColor;
-      const hs = config.hairStyle;
-
-      if (hs === 'curls' || hs === 'afro') {
-        const r = hs === 'afro' ? 26 : 22;
-        // Volumetric textured crown
-        drawBox(0, headY - headSize / 2 - 4, 0, headSize + 8, 14, headSize + 8, hairColor, originX, originY, scale);
-        drawBox(-headSize / 2 - 3, headY - 4, 0, 10, headSize - 4, headSize + 4, hairColor, originX, originY, scale);
-        drawBox(headSize / 2 + 3, headY - 4, 0, 10, headSize - 4, headSize + 4, hairColor, originX, originY, scale);
-        drawBox(0, headY - 2, -headSize / 2 - 3, headSize + 6, headSize, 10, hairColor, originX, originY, scale);
-      } else if (hs === 'locs' || hs === 'braids') {
-        drawBox(0, headY - headSize / 2 - 3, 0, headSize + 6, 12, headSize + 6, hairColor, originX, originY, scale);
-        // Cascading side loc strands
-        drawBox(-headSize / 2 - 3, headY + 8, 2, 8, 30, 10, hairColor, originX, originY, scale);
-        drawBox(headSize / 2 + 3, headY + 8, 2, 8, 30, 10, hairColor, originX, originY, scale);
-        drawBox(0, headY + 12, -headSize / 2 - 3, headSize, 32, 8, hairColor, originX, originY, scale);
-      } else if (hs === 'fade') {
-        // Tapered modern crop
-        drawBox(0, headY - headSize / 2 - 3, 0, headSize + 4, 10, headSize + 4, hairColor, originX, originY, scale);
-        drawBox(0, headY - 4, -headSize / 2 - 1, headSize + 2, headSize - 8, 4, hairColor, originX, originY, scale);
-      } else if (hs === 'bob') {
-        // Sleek chin-length cut
-        drawBox(0, headY - headSize / 2 - 3, 0, headSize + 6, 12, headSize + 6, hairColor, originX, originY, scale);
-        drawBox(-headSize / 2 - 2, headY + 4, 0, 8, 22, headSize + 4, hairColor, originX, originY, scale);
-        drawBox(headSize / 2 + 2, headY + 4, 0, 8, 22, headSize + 4, hairColor, originX, originY, scale);
-        drawBox(0, headY + 4, -headSize / 2 - 2, headSize + 4, 22, 8, hairColor, originX, originY, scale);
-      } else if (hs === 'long_flowy') {
-        // Cascading wavy locks
-        drawBox(0, headY - headSize / 2 - 3, 0, headSize + 6, 12, headSize + 6, hairColor, originX, originY, scale);
-        drawBox(-headSize / 2 - 3, headY + 12, 0, 8, 36, 12, hairColor, originX, originY, scale);
-        drawBox(headSize / 2 + 3, headY + 12, 0, 8, 36, 12, hairColor, originX, originY, scale);
-        drawBox(0, headY + 16, -headSize / 2 - 3, headSize + 4, 40, 8, hairColor, originX, originY, scale);
-      } else {
-        // Pixie crop
-        drawBox(0, headY - headSize / 2 - 3, 0, headSize + 4, 10, headSize + 4, hairColor, originX, originY, scale);
-        drawBox(0, headY - 6, -headSize / 2 - 2, headSize + 2, 16, 6, hairColor, originX, originY, scale);
-      }
-
-      // 8. HEADWEAR ACCESSORIES
-      if (config.accessory === 'sun_cap') {
-        // Visor Dad Cap
-        drawBox(0, headY - headSize / 2 - 6, 0, headSize + 6, 8, headSize + 6, '#ff6b8b', originX, originY, scale);
-        drawBox(0, headY - headSize / 2 - 2, headSize / 2 + 8, headSize + 2, 3, 14, '#ff8da1', originX, originY, scale);
-      } else if (config.accessory === 'beanie') {
-        // Folded knit dome
-        drawBox(0, headY - headSize / 2 - 8, 0, headSize + 8, 16, headSize + 8, '#ffd166', originX, originY, scale);
-      }
-
-      ctx.restore();
-      animationFrameId = requestAnimationFrame(render);
+  useEffect(() => {
+    window.addEventListener('mouseup', handlePointerUp);
+    window.addEventListener('touchend', handlePointerUp);
+    return () => {
+      window.removeEventListener('mouseup', handlePointerUp);
+      window.removeEventListener('touchend', handlePointerUp);
     };
+  }, []);
 
-    animationFrameId = requestAnimationFrame(render);
-    return () => cancelAnimationFrame(animationFrameId);
-  }, [config, yaw, width, height]);
+  // Quick Controls
+  const handleResetView = (e) => {
+    e.stopPropagation();
+    engineRef.current.targetYaw = 0.35;
+    engineRef.current.targetPitch = 0.15;
+    engineRef.current.targetDistance = 4.6;
+  };
+
+  const handleZoomIn = (e) => {
+    e.stopPropagation();
+    engineRef.current.targetDistance = Math.max(3.2, engineRef.current.targetDistance - 0.5);
+  };
+
+  const handleZoomOut = (e) => {
+    e.stopPropagation();
+    engineRef.current.targetDistance = Math.min(6.2, engineRef.current.targetDistance + 0.5);
+  };
+
+  const handleToggleAutoRotate = (e) => {
+    e.stopPropagation();
+    const nextVal = !autoRotate;
+    setAutoRotate(nextVal);
+    engineRef.current.isAutoRotating = nextVal;
+  };
 
   return (
     <div
-      className="relative flex items-center justify-center cursor-grab active:cursor-grabbing select-none"
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
+      className="relative w-full h-full flex items-center justify-center cursor-grab active:cursor-grabbing select-none"
+      onMouseDown={handlePointerDown}
+      onMouseMove={handlePointerMove}
+      onTouchStart={handlePointerDown}
+      onTouchMove={handlePointerMove}
     >
-      <canvas
-        ref={canvasRef}
-        style={{ width: `${width}px`, height: `${height}px` }}
-        className="block drop-shadow-2xl"
-      />
-      {/* 360 Rotation Hint */}
-      <div className="absolute bottom-3 px-3 py-1 rounded-full tropical-glass text-[11px] font-medium text-slate-600 border border-white/80 shadow-sm pointer-events-none">
-        ⇄ Drag to rotate 360°
+      <div ref={containerRef} className="w-full h-full flex items-center justify-center drop-shadow-2xl" />
+
+      {/* Floating 3D Navigation Controls Toolbar */}
+      <div className="absolute top-3 right-3 flex items-center space-x-1.5 p-1 rounded-2xl bg-white/70 backdrop-blur-md border border-white/80 shadow-sm z-20">
+        <button
+          onClick={handleToggleAutoRotate}
+          title={autoRotate ? 'Pause auto-spin' : 'Auto-spin 360°'}
+          className={`p-1.5 rounded-xl transition ${
+            autoRotate
+              ? 'bg-tropical-coral text-white shadow-sm'
+              : 'text-slate-600 hover:bg-black/5 hover:text-slate-900'
+          }`}
+        >
+          {autoRotate ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+        </button>
+        <button
+          onClick={handleResetView}
+          title="Reset Camera Angle"
+          className="p-1.5 rounded-xl text-slate-600 hover:bg-black/5 hover:text-slate-900 transition"
+        >
+          <RotateCcw className="w-3.5 h-3.5" />
+        </button>
+        <button
+          onClick={handleZoomIn}
+          title="Zoom In"
+          className="p-1.5 rounded-xl text-slate-600 hover:bg-black/5 hover:text-slate-900 transition"
+        >
+          <ZoomIn className="w-3.5 h-3.5" />
+        </button>
+        <button
+          onClick={handleZoomOut}
+          title="Zoom Out"
+          className="p-1.5 rounded-xl text-slate-600 hover:bg-black/5 hover:text-slate-900 transition"
+        >
+          <ZoomOut className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      {/* 360 Rotation Hint pill */}
+      <div className="absolute bottom-2 px-3 py-1 rounded-full bg-white/75 backdrop-blur-md text-[11px] font-medium text-slate-600 border border-white/80 shadow-sm pointer-events-none flex items-center space-x-1.5">
+        <span>⇄</span>
+        <span>Drag to rotate 360°</span>
       </div>
     </div>
   );

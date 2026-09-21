@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useWorldStore, worldStore } from '../store/useWorldStore';
 import { INVENTORY_CATALOG } from '../types/hotbar';
+import { isCreativeMode } from '../types/avatar';
 import {
   X,
   Package,
@@ -13,6 +14,8 @@ import {
   BookOpen,
   Trees,
   Check,
+  Bed,
+  Lamp,
 } from 'lucide-react';
 
 const ICON_MAP = {
@@ -24,6 +27,8 @@ const ICON_MAP = {
   BookOpen,
   Trees,
   Sparkles,
+  Bed,
+  Lamp,
 };
 
 const CATEGORIES = [
@@ -45,9 +50,7 @@ export default function InventoryModal() {
   const [selectedCatalogItem, setSelectedCatalogItem] = useState(INVENTORY_CATALOG[0]);
   const [targetHotbarIndex, setTargetHotbarIndex] = useState(selectedHotbarIndex);
 
-  const isCreative =
-    avatarConfig?.gameMode === 'dreamweaver' ||
-    avatarConfig?.gameMode === 'creative';
+  const isCreative = isCreativeMode(avatarConfig?.gameMode);
 
   // Listen to 'E' and 'Escape' to close inventory
   useEffect(() => {

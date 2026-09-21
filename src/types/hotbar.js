@@ -79,7 +79,7 @@ export const DEFAULT_HOTBAR_SLOTS = [
 ];
 
 export const INVENTORY_CATALOG = [
-  // Pastel Bricks
+  // 1. Pastel & Dark Bricks
   {
     id: 'brick_lavender',
     name: 'Lavender Pastel Brick',
@@ -171,7 +171,26 @@ export const INVENTORY_CATALOG = [
     defaultCount: 64,
   },
 
-  // Interior Props
+  {
+    id: 'brick_wood_log',
+    name: 'Lego Wood Log',
+    category: 'nature',
+    type: 'brick',
+    color: '#795548',
+    icon: 'Box',
+    defaultCount: 64,
+  },
+  {
+    id: 'brick_wood_plank',
+    name: 'Lego Wood Planks',
+    category: 'bricks',
+    type: 'brick',
+    color: '#d4a373',
+    icon: 'Box',
+    defaultCount: 64,
+  },
+
+  // 2. Mini Interior Lego Props
   {
     id: 'prop_lego_chair',
     name: 'Lego Mini Chair',
@@ -203,6 +222,36 @@ export const INVENTORY_CATALOG = [
     defaultCount: 16,
   },
   {
+    id: 'prop_lego_sofa',
+    name: 'Cozy Lego Armchair',
+    category: 'props',
+    type: 'prop',
+    propId: 'lego_sofa',
+    color: '#ff6b8b',
+    icon: 'Armchair',
+    defaultCount: 12,
+  },
+  {
+    id: 'prop_lego_bed',
+    name: 'Patchwork Mini Bed',
+    category: 'props',
+    type: 'prop',
+    propId: 'lego_bed',
+    color: '#00bbf9',
+    icon: 'Bed',
+    defaultCount: 8,
+  },
+  {
+    id: 'prop_lego_lamp',
+    name: 'Cozy Standing Floor Lamp',
+    category: 'props',
+    type: 'prop',
+    propId: 'lego_lamp',
+    color: '#ffd166',
+    icon: 'Lamp',
+    defaultCount: 12,
+  },
+  {
     id: 'prop_lego_plant',
     name: 'Mini Succulent Pot',
     category: 'props',
@@ -220,10 +269,10 @@ export const INVENTORY_CATALOG = [
     propId: 'lego_bookshelf',
     color: '#8b5cf6',
     icon: 'BookOpen',
-    defaultCount: 16,
+    defaultCount: 12,
   },
 
-  // Nature & Glass
+  // 3. Nature & Glass
   {
     id: 'brick_glass',
     name: 'Frosted Glass Brick',
